@@ -1,0 +1,436 @@
+// Live OpenSearch client for OMEA.
+// These functions implement the exact queries documented in
+// OMEA_query_dsl_reference.md, validated earlier against the real dataset.
+
+const OPENSEARCH_URL = "http://localhost:9200";
+const INDEX = "omea-articles";
+
+async function runQuery(body) {
+  const res = await fetch(`${OPENSEARCH_URL}/${INDEX}/_search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`OpenSearch query failed: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+async function runMsearch(ndjsonLines) {
+  const res = await fetch(`${OPENSEARCH_URL}/_msearch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-ndjson" },
+    body: ndjsonLines.join("\n") + "\n",
+  });
+  if (!res.ok) throw new Error(`OpenSearch msearch failed: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+/**
+ * Builds the topic + optional date-range + optional channel filter shared by
+ * every query. This is the single place that enforces "all filters apply
+ * everywhere" — any new query built on top of this automatically respects
+ * the date range, interval, and selected publications.
+ * dateRange: { from?: "YYYY-MM-DD", to?: "YYYY-MM-DD" }
+ * publications: string[] | null — restrict to these publications if given
+ */
+function topicFilter(topic, dateRange = {}, publications = null) {
+  const must = [];
+  if (dateRange.from || dateRange.to) {
+    const range = {};
+    if (dateRange.from) range.gte = dateRange.from;
+    if (dateRange.to) range.lte = dateRange.to;
+    must.push({ range: { date: range } });
+  }
+  if (publications && publications.length > 0) {
+    must.push({ terms: { publication: publications } });
+  }
+  return {
+    bool: {
+      must,
+      should: [
+        { match: { title: topic } },
+        { match: { article: topic } },
+      ],
+      minimum_should_match: 1,
+    },
+  };
+}
+
+// OpenSearch's calendar_interval accepts "month", "quarter", "year" directly.
+const DATE_FORMAT_FOR_INTERVAL = {
+  month: "yyyy-MM",
+  quarter: "yyyy-MM",
+  year: "yyyy",
+};
+
+/** KPI summary — feeds the Marketing Owner cards. */
+export async function fetchSummary(topic, dateRange = {}) {
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange),
+    aggs: {
+      avg_sentiment: { avg: { field: "sentiment_score" } },
+      total_impressions: { sum: { field: "estimated_impressions" } },
+      avg_engagement_rate: { avg: { field: "engagement_rate" } },
+      avg_ctr: { avg: { field: "ctr" } },
+      avg_cpe: { avg: { field: "cpe" } },
+      total_emv: { sum: { field: "emv" } },
+      avg_roi_index: { avg: { field: "roi_index" } },
+    },
+  };
+  const data = await runQuery(body);
+  const a = data.aggregations;
+  return {
+    volume: data.hits.total.value,
+    sentiment: a.avg_sentiment.value ?? 0,
+    impressions: a.total_impressions.value ?? 0,
+    engagement: a.avg_engagement_rate.value ?? 0,
+    ctr: a.avg_ctr.value ?? 0,
+    cpe: a.avg_cpe.value ?? 0,
+    emv: a.total_emv.value ?? 0,
+    roi: a.avg_roi_index.value ?? 0,
+  };
+}
+
+/**
+ * Monthly/quarterly/yearly coverage volume, broken down per publication —
+ * lets the trend chart respond to the channel filter without an extra query
+ * per click. Returns { [publicationName]: { [periodKey]: count } }.
+ */
+export async function fetchMonthlyVolumeByPublication(topic, dateRange = {}, interval = "month") {
+  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange),
+    aggs: {
+      by_publication: {
+        terms: { field: "publication", size: 30 },
+        aggs: {
+          periods: {
+            date_histogram: { field: "date", calendar_interval: interval, format },
+          },
+        },
+      },
+    },
+  };
+  const data = await runQuery(body);
+  const result = {};
+  for (const pubBucket of data.aggregations.by_publication.buckets) {
+    const periods = {};
+    for (const periodBucket of pubBucket.periods.buckets) {
+      periods[periodBucket.key_as_string] = periodBucket.doc_count;
+    }
+    result[pubBucket.key] = periods;
+  }
+  return result;
+}
+
+/**
+ * Monthly/quarterly/yearly EMV (Earned Media Value) broken down per
+ * publication — feeds the "Revenue generated" chart. Same structure as
+ * fetchMonthlyVolumeByPublication but summing emv instead of counting docs.
+ */
+export async function fetchMonthlyEmvByPublication(topic, dateRange = {}, interval = "month") {
+  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange),
+    aggs: {
+      by_publication: {
+        terms: { field: "publication", size: 30 },
+        aggs: {
+          periods: {
+            date_histogram: { field: "date", calendar_interval: interval, format },
+            aggs: { total_emv: { sum: { field: "emv" } } },
+          },
+        },
+      },
+    },
+  };
+  const data = await runQuery(body);
+  const result = {};
+  for (const pubBucket of data.aggregations.by_publication.buckets) {
+    const periods = {};
+    for (const periodBucket of pubBucket.periods.buckets) {
+      periods[periodBucket.key_as_string] = periodBucket.total_emv.value ?? 0;
+    }
+    result[pubBucket.key] = periods;
+  }
+  return result;
+}
+
+/** Per-publication KPI breakdown — feeds the Data Analyst table. */
+export async function fetchPublicationBreakdown(topic, dateRange = {}) {
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange),
+    aggs: {
+      by_publication: {
+        terms: { field: "publication", size: 30 },
+        aggs: {
+          avg_sentiment: { avg: { field: "sentiment_score" } },
+          total_impressions: { sum: { field: "estimated_impressions" } },
+          avg_engagement_rate: { avg: { field: "engagement_rate" } },
+          avg_roi_index: { avg: { field: "roi_index" } },
+          avg_cpe: { avg: { field: "cpe" } },
+          total_emv: { sum: { field: "emv" } },
+        },
+      },
+    },
+  };
+  const data = await runQuery(body);
+  return data.aggregations.by_publication.buckets.map((b) => ({
+    name: b.key,
+    articles: b.doc_count,
+    sentiment: b.avg_sentiment.value ?? 0,
+    engagement: b.avg_engagement_rate.value ?? 0,
+    impressions: b.total_impressions.value ?? 0,
+    emv: b.total_emv.value ?? 0,
+    roi: b.avg_roi_index.value ?? 0,
+    cpe: b.avg_cpe.value ?? 0,
+  }));
+}
+
+/**
+ * Sentiment distribution — buckets every matched article by sentiment range
+ * (e.g. -1.0 to -0.8, ... 0.8 to 1.0). Reveals the *shape* of sentiment,
+ * which a single average can hide (e.g. a 0.0 average could mean "all
+ * neutral" or "a even split of strongly positive and strongly negative").
+ */
+export async function fetchSentimentDistribution(topic, dateRange = {}, publications = null) {
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange, publications),
+    aggs: {
+      sentiment_histogram: {
+        histogram: {
+          field: "sentiment_score",
+          interval: 0.2,
+          extended_bounds: { min: -1, max: 0.8 },
+        },
+      },
+    },
+  };
+  const data = await runQuery(body);
+  const buckets = data.aggregations?.sentiment_histogram?.buckets || [];
+  return buckets.map((b) => ({ bucketStart: b.key, count: b.doc_count }));
+}
+
+/**
+ * A sample of individual articles with per-article fields — feeds the
+ * sentiment-vs-ROI and word-count-vs-engagement scatter plots. One query
+ * serves both charts since they need the same underlying article-level data.
+ */
+export async function fetchArticleSample(topic, dateRange = {}, publications = null, size = 400) {
+  const body = {
+    size,
+    query: topicFilter(topic, dateRange, publications),
+    _source: ["publication", "sentiment_score", "roi_index", "word_count", "engagement_rate"],
+  };
+  const data = await runQuery(body);
+  return data.hits.hits.map((h) => h._source);
+}
+
+/**
+ * Top and bottom performing articles by ROI Index — feeds the spotlight
+ * card. Uses the same explainability fields as the drill-down panel.
+ */
+export async function fetchPerformanceSpotlight(topic, dateRange = {}) {
+  const fields = [
+    "title", "publication", "date", "section", "sentiment_score",
+    "reach_tier", "estimated_impressions", "engagement_rate", "ctr", "cpe", "emv", "roi_index",
+  ];
+  const [topRes, bottomRes] = await Promise.all([
+    runQuery({
+      size: 1,
+      query: topicFilter(topic, dateRange),
+      sort: [{ roi_index: { order: "desc" } }],
+      _source: fields,
+    }),
+    runQuery({
+      size: 1,
+      query: topicFilter(topic, dateRange),
+      sort: [{ roi_index: { order: "asc" } }],
+      _source: fields,
+    }),
+  ]);
+  const top = topRes.hits.hits[0]?._source || null;
+  const bottom = bottomRes.hits.hits[0]?._source || null;
+  return { top, bottom };
+}
+
+/**
+ * For each keyword, finds one real example article (title + a highlighted
+ * snippet) that mentions both the topic and that keyword — this is what
+ * turns a bare keyword list into inspectable context. Batches all keyword
+ * lookups into a single _msearch request rather than one round-trip per
+ * keyword.
+ */
+export async function fetchKeywordContexts(topic, keywordKeys, dateRange = {}, publications = null) {
+  if (keywordKeys.length === 0) return {};
+
+  const ndjsonLines = [];
+  for (const kw of keywordKeys) {
+    ndjsonLines.push(JSON.stringify({ index: INDEX }));
+    ndjsonLines.push(JSON.stringify({
+      size: 1,
+      query: {
+        bool: {
+          must: [topicFilter(topic, dateRange, publications), { match_phrase: { article: kw } }],
+        },
+      },
+      highlight: {
+        fields: { article: { fragment_size: 160, number_of_fragments: 1 } },
+      },
+      _source: ["title", "publication", "date"],
+    }));
+  }
+  const data = await runMsearch(ndjsonLines);
+
+  const contexts = {};
+  data.responses.forEach((resp, i) => {
+    const hit = resp.hits?.hits?.[0];
+    contexts[keywordKeys[i]] = hit
+      ? {
+          title: hit._source.title,
+          publication: hit._source.publication,
+          snippet: hit.highlight?.article?.[0] || null,
+        }
+      : null;
+  });
+  return contexts;
+}
+
+/**
+ * Monthly/quarterly/yearly article volume broken down by editorial section
+ * — feeds the "Discussion contexts" stacked column chart. Absolute counts,
+ * not normalized, so overall volume is still visible alongside composition.
+ */
+export async function fetchMonthlyVolumeBySection(topic, dateRange = {}, interval = "month", publications = null) {
+  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange, publications),
+    aggs: {
+      by_section: {
+        terms: { field: "section", size: 10 },
+        aggs: {
+          periods: { date_histogram: { field: "date", calendar_interval: interval, format } },
+        },
+      },
+    },
+  };
+  const data = await runQuery(body);
+  const result = {};
+  for (const bucket of data.aggregations.by_section.buckets) {
+    const periods = {};
+    for (const pb of bucket.periods.buckets) periods[pb.key_as_string] = pb.doc_count;
+    result[bucket.key] = periods;
+  }
+  return result;
+}
+
+/**
+ * "Discussion contexts" — breaks down which editorial sections (Politics,
+ * Business, Entertainment, etc.) this topic is covered in. Unlike the
+ * keyword/phrase mining below, this uses real structured metadata rather
+ * than free text, so it's immune to syndication-footer noise. Now respects
+ * the channel (publication) filter, same as every other chart.
+ */
+export async function fetchContextBreakdown(topic, dateRange = {}, interval = "month", publications = null) {
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange, publications),
+    aggs: {
+      by_section: { terms: { field: "section", size: 10 } },
+    },
+  };
+  const data = await runQuery(body);
+  const buckets = data.aggregations?.by_section?.buckets || [];
+  const sections = buckets.map((b) => ({ name: b.key, count: b.doc_count }));
+
+  if (sections.length === 0) {
+    return { sections: [], totalMatched: data.hits.total.value, monthlyBySection: {} };
+  }
+
+  const ndjsonLines = [];
+  for (const s of sections) {
+    ndjsonLines.push(JSON.stringify({ index: INDEX }));
+    ndjsonLines.push(JSON.stringify({
+      size: 1,
+      query: { bool: { must: [topicFilter(topic, dateRange, publications), { term: { section: s.name } }] } },
+      highlight: {
+        fields: {
+          article: { fragment_size: 160, number_of_fragments: 1, highlight_query: { match: { article: topic } } },
+        },
+      },
+      _source: ["title", "publication", "date"],
+    }));
+  }
+
+  const [monthlyBySection, msearchResult] = await Promise.all([
+    fetchMonthlyVolumeBySection(topic, dateRange, interval, publications),
+    runMsearch(ndjsonLines),
+  ]);
+
+  const withContext = sections.map((s, i) => {
+    const hit = msearchResult.responses[i]?.hits?.hits?.[0];
+    return {
+      ...s,
+      context: hit
+        ? { title: hit._source.title, publication: hit._source.publication, snippet: hit.highlight?.article?.[0] || null }
+        : null,
+    };
+  });
+
+  return { sections: withContext, totalMatched: data.hits.total.value, monthlyBySection };
+}
+
+const PHRASE_FIELD = {
+  1: "article",
+  2: "article.bigram",
+  3: "article.trigram",
+  4: "article.quadgram",
+};
+
+/**
+ * Related/prominent keywords — terms (or multi-word phrases) that appear
+ * unusually often in articles about this topic compared to the whole index.
+ * phraseLength selects single words (1) or 2/3/4-word shingled phrases,
+ * using the dedicated analyzed sub-fields built at ingestion time. Now
+ * respects the channel (publication) filter too.
+ */
+export async function fetchKeywordProminence(topic, phraseLength = 1, dateRange = {}, publications = null) {
+  const field = PHRASE_FIELD[phraseLength] || "article";
+  const sigTextAgg = { field, size: 10 };
+  // Only exclude the topic term itself for single-word mode — for phrases,
+  // terms like "facebook scandal" that include the topic are exactly the
+  // interesting ones and should be kept.
+  if (phraseLength === 1) sigTextAgg.exclude = [topic.toLowerCase()];
+
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange, publications),
+    aggs: { prominent_keywords: { significant_text: sigTextAgg } },
+  };
+  const data = await runQuery(body);
+  const buckets = data.aggregations?.prominent_keywords?.buckets || [];
+  const keywords = buckets.map((b) => ({ key: b.key, score: b.score, docCount: b.doc_count }));
+
+  const contexts = await fetchKeywordContexts(topic, keywords.map((k) => k.key), dateRange, publications);
+  return keywords.map((k) => ({ ...k, context: contexts[k.key] }));
+}
+
+/** Fetches everything a topic search needs, in parallel (keywords/contexts load separately). */
+export async function fetchTopicData(topic, dateRange = {}, interval = "month") {
+  const [summary, monthlyByPublication, monthlyEmvByPublication, publications, spotlight] = await Promise.all([
+    fetchSummary(topic, dateRange),
+    fetchMonthlyVolumeByPublication(topic, dateRange, interval),
+    fetchMonthlyEmvByPublication(topic, dateRange, interval),
+    fetchPublicationBreakdown(topic, dateRange),
+    fetchPerformanceSpotlight(topic, dateRange),
+  ]);
+  return { label: topic, summary, monthlyByPublication, monthlyEmvByPublication, publications, spotlight };
+}
