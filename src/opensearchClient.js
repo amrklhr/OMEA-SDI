@@ -410,9 +410,28 @@ const PHRASE_FIELD = {
  * using the dedicated analyzed sub-fields built at ingestion time. Now
  * respects the channel (publication) filter too.
  */
+// Common English connector/relational words — filtered out of 2/3/4-word
+// phrase results so "Facebook and Cambridge" doesn't show up as a keyword
+// alongside genuinely meaningful phrases like "Facebook scandal".
+const STOPWORDS = new Set([
+  "a", "an", "the", "and", "or", "but", "nor", "so", "yet",
+  "of", "in", "on", "at", "to", "for", "with", "by", "from", "as",
+  "is", "are", "was", "were", "be", "been", "being",
+  "this", "that", "these", "those", "it", "its",
+  "not", "if", "then", "than", "into", "over", "under", "about",
+]);
+
+function containsStopword(phrase) {
+  return phrase.split(/\s+/).some((word) => STOPWORDS.has(word.toLowerCase()));
+}
+
 export async function fetchKeywordProminence(topic, phraseLength = 1, dateRange = {}, publications = null) {
   const field = PHRASE_FIELD[phraseLength] || "article";
-  const sigTextAgg = { field, size: 10 };
+  // Multi-word modes fetch extra candidates up front, since some will be
+  // filtered out below for containing a connector word like "and" or "of" —
+  // this keeps the final result count close to a full 10 after filtering.
+  const fetchSize = phraseLength > 1 ? 30 : 10;
+  const sigTextAgg = { field, size: fetchSize };
   // Only exclude the topic term itself for single-word mode — for phrases,
   // terms like "facebook scandal" that include the topic are exactly the
   // interesting ones and should be kept.
@@ -425,7 +444,11 @@ export async function fetchKeywordProminence(topic, phraseLength = 1, dateRange 
   };
   const data = await runQuery(body);
   const buckets = data.aggregations?.prominent_keywords?.buckets || [];
-  const keywords = buckets.map((b) => ({ key: b.key, score: b.score, docCount: b.doc_count }));
+  let keywords = buckets.map((b) => ({ key: b.key, score: b.score, docCount: b.doc_count }));
+
+  if (phraseLength > 1) {
+    keywords = keywords.filter((k) => !containsStopword(k.key)).slice(0, 10);
+  }
 
   const contexts = await fetchKeywordContexts(topic, keywords.map((k) => k.key), dateRange, publications);
   return keywords.map((k) => ({ ...k, context: contexts[k.key] }));
