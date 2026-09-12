@@ -10,8 +10,8 @@ export default async function handler(req, res) {
   }
 
   const { AIVEN_HOST, AIVEN_PORT, AIVEN_USER, AIVEN_PASSWORD } = process.env;
-  const url = `https://${AIVEN_HOST}:${AIVEN_PORT}/omea-articles/_search`;
-  const auth = Buffer.from(`${AIVEN_USER}:${AIVEN_PASSWORD}`).toString("base64");
+  const url = `https://${(AIVEN_HOST || "").trim()}:${(AIVEN_PORT || "").trim()}/omea-articles/_search`;
+  const auth = Buffer.from(`${(AIVEN_USER || "").trim()}:${(AIVEN_PASSWORD || "").trim()}`).toString("base64");
 
   try {
     const upstream = await fetch(url, {
