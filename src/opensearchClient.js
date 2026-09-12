@@ -5,8 +5,15 @@
 const OPENSEARCH_URL = "http://localhost:9200";
 const INDEX = "omea-articles";
 
+// In production (deployed on Vercel), route through the secure proxy
+// functions instead of hitting OpenSearch directly — this keeps your Aiven
+// credentials server-side. Locally, keep talking straight to Docker as
+// before, so the existing local dev workflow is unaffected.
+const IS_PROD = import.meta.env.PROD;
+
 async function runQuery(body) {
-  const res = await fetch(`${OPENSEARCH_URL}/${INDEX}/_search`, {
+  const url = IS_PROD ? "/api/search" : `${OPENSEARCH_URL}/${INDEX}/_search`;
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -18,7 +25,8 @@ async function runQuery(body) {
 }
 
 async function runMsearch(ndjsonLines) {
-  const res = await fetch(`${OPENSEARCH_URL}/_msearch`, {
+  const url = IS_PROD ? "/api/msearch" : `${OPENSEARCH_URL}/_msearch`;
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/x-ndjson" },
     body: ndjsonLines.join("\n") + "\n",
