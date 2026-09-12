@@ -396,6 +396,44 @@ export async function fetchContextBreakdown(topic, dateRange = {}, interval = "m
   return { sections: withContext, totalMatched: data.hits.total.value, monthlyBySection };
 }
 
+/**
+ * Article list for a specific keyword/phrase — feeds the expandable
+ * "view articles" list under each keyword result. Returns just title and
+ * publication, kept lightweight since it's a browsable list, not a
+ * detailed drill-down.
+ */
+export async function fetchArticlesForKeyword(topic, keyword, dateRange = {}, publications = null, size = 25) {
+  const body = {
+    size,
+    query: {
+      bool: {
+        must: [topicFilter(topic, dateRange, publications), { match_phrase: { article: keyword } }],
+      },
+    },
+    _source: ["title", "publication"],
+  };
+  const data = await runQuery(body);
+  return data.hits.hits.map((h) => h._source);
+}
+
+/**
+ * Article list for a specific editorial section — feeds the expandable
+ * "view articles" list under each Discussion Contexts result.
+ */
+export async function fetchArticlesForSection(topic, section, dateRange = {}, publications = null, size = 25) {
+  const body = {
+    size,
+    query: {
+      bool: {
+        must: [topicFilter(topic, dateRange, publications), { term: { section } }],
+      },
+    },
+    _source: ["title", "publication"],
+  };
+  const data = await runQuery(body);
+  return data.hits.hits.map((h) => h._source);
+}
+
 const PHRASE_FIELD = {
   1: "article",
   2: "article.bigram",
@@ -412,13 +450,26 @@ const PHRASE_FIELD = {
  */
 // Common English connector/relational words — filtered out of 2/3/4-word
 // phrase results so "Facebook and Cambridge" doesn't show up as a keyword
-// alongside genuinely meaningful phrases like "Facebook scandal".
+// alongside genuinely meaningful phrases like "Facebook scandal". This is
+// the standard English stopword list (articles, prepositions, pronouns,
+// auxiliary verbs, conjunctions), not just a handful of examples.
 const STOPWORDS = new Set([
-  "a", "an", "the", "and", "or", "but", "nor", "so", "yet",
-  "of", "in", "on", "at", "to", "for", "with", "by", "from", "as",
-  "is", "are", "was", "were", "be", "been", "being",
-  "this", "that", "these", "those", "it", "its",
-  "not", "if", "then", "than", "into", "over", "under", "about",
+  "a", "an", "the",
+  "and", "or", "but", "nor", "so", "yet", "if", "because", "as", "than", "then",
+  "of", "in", "on", "at", "to", "for", "with", "by", "from", "into",
+  "over", "under", "about", "against", "between", "through", "during",
+  "before", "after", "above", "below", "up", "down", "out", "off",
+  "again", "further", "once", "here", "there", "when", "where", "why", "how",
+  "is", "are", "was", "were", "be", "been", "being", "am",
+  "do", "does", "did", "doing", "have", "has", "had", "having",
+  "will", "would", "shall", "should", "can", "could", "may", "might", "must",
+  "i", "me", "my", "myself", "we", "our", "ours", "ourselves",
+  "you", "your", "yours", "yourself", "yourselves",
+  "he", "him", "his", "himself", "she", "her", "hers", "herself",
+  "it", "its", "itself", "they", "them", "their", "theirs", "themselves",
+  "this", "that", "these", "those", "who", "whom", "which", "what",
+  "all", "any", "both", "each", "few", "more", "most", "other", "some",
+  "such", "no", "not", "only", "own", "same", "too", "very", "just",
 ]);
 
 function containsStopword(phrase) {

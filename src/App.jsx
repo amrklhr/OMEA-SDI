@@ -4,11 +4,12 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, Legend, ScatterChart, Scatter, ZAxis, AreaChart, Area,
 } from "recharts";
 import {
-  Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, BookOpen, Check,
+  Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, BookOpen, Check, List,
 } from "lucide-react";
 import {
   fetchTopicData, fetchKeywordProminence, fetchContextBreakdown,
   fetchSentimentDistribution, fetchArticleSample,
+  fetchArticlesForKeyword, fetchArticlesForSection,
 } from "./opensearchClient";
 
 const INK = "#1B2430";
@@ -322,7 +323,88 @@ function MediaSharePie({ publications, selectedPubs }) {
   );
 }
 
-function KeywordPanel({ keywords, loading, phraseLength, onPhraseLengthChange, onPivot }) {
+function ArticleListReveal({ expanded, loading, articles }) {
+  if (!expanded) return null;
+  return (
+    <div className="mt-2 max-h-64 overflow-y-auto rounded-sm border" style={{ borderColor: "#E3DDCE", background: "#F5F1E8" }}>
+      {loading ? (
+        <div className="flex items-center gap-2 p-3 text-xs" style={{ color: SUBTEXT }}>
+          <Loader2 size={13} className="animate-spin" /> Loading articles…
+        </div>
+      ) : articles.length === 0 ? (
+        <div className="p-3 text-xs" style={{ color: SUBTEXT }}>No articles found.</div>
+      ) : (
+        <table className="w-full text-xs">
+          <tbody>
+            {articles.map((a, i) => (
+              <tr key={i} className="border-b last:border-0" style={{ borderColor: "#E3DDCE" }}>
+                <td className="px-3 py-2" style={{ color: INK }}>{a.title}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-right" style={{ color: SUBTEXT }}>{a.publication}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function KeywordRow({ k, topic, dateRange, selectedPubs, onPivot }) {
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [articles, setArticles] = useState([]);
+
+  function toggle() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && articles.length === 0) {
+      setLoading(true);
+      fetchArticlesForKeyword(topic, k.key, dateRange, selectedPubs)
+        .then(setArticles)
+        .catch(() => setArticles([]))
+        .finally(() => setLoading(false));
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1 border-b pb-3 last:border-0 last:pb-0" style={{ borderColor: "#E3DDCE" }}>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={toggle}
+          className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors hover:opacity-80"
+          style={{ background: INK, color: PAPER }}
+        >
+          <List size={12} /> {k.key}
+        </button>
+        <button
+          onClick={() => onPivot(k.key)}
+          className="flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors hover:opacity-80"
+          style={{ borderColor: "#D9D2C2", color: SUBTEXT }}
+          title="Search this keyword as a new topic"
+        >
+          <Search size={11} /> Analyze
+        </button>
+        <span className="text-xs" style={{ color: SUBTEXT }}>{k.docCount} articles</span>
+      </div>
+      {k.context && (
+        <div className="pl-1 text-xs" style={{ color: "#3A4150" }}>
+          <span className="font-medium" style={{ color: INK }}>{k.context.title}</span>
+          {k.context.publication && <span style={{ color: SUBTEXT }}> — {k.context.publication}</span>}
+          {k.context.snippet && (
+            <div
+              className="mt-1 italic"
+              style={{ color: SUBTEXT }}
+              dangerouslySetInnerHTML={{ __html: `\u201c${k.context.snippet}\u201d` }}
+            />
+          )}
+        </div>
+      )}
+      <ArticleListReveal expanded={expanded} loading={loading} articles={articles} />
+    </div>
+  );
+}
+
+function KeywordPanel({ keywords, loading, phraseLength, onPhraseLengthChange, onPivot, topic, dateRange, selectedPubs }) {
   const LENGTHS = [
     { n: 1, label: "1 word" },
     { n: 2, label: "2 words" },
@@ -352,8 +434,8 @@ function KeywordPanel({ keywords, loading, phraseLength, onPhraseLengthChange, o
         </div>
       </div>
       <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-        Terms or phrases that appear unusually often in this topic&apos;s coverage, each with a
-        real example article for context.
+        Terms or phrases that appear unusually often in this topic&apos;s coverage. Click a
+        keyword to see its matching articles, or Analyze to search it as a new topic.
       </div>
       {loading ? (
         <div className="flex items-center gap-2 py-6 text-xs" style={{ color: SUBTEXT }}>
@@ -366,31 +448,7 @@ function KeywordPanel({ keywords, loading, phraseLength, onPhraseLengthChange, o
       ) : (
         <div className="flex flex-col gap-3">
           {keywords.map((k) => (
-            <div key={k.key} className="flex flex-col gap-1 border-b pb-3 last:border-0 last:pb-0" style={{ borderColor: "#E3DDCE" }}>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => onPivot(k.key)}
-                  className="rounded-full px-3 py-1 text-xs font-medium transition-colors hover:opacity-80"
-                  style={{ background: INK, color: PAPER }}
-                >
-                  {k.key}
-                </button>
-                <span className="text-xs" style={{ color: SUBTEXT }}>{k.docCount} articles</span>
-              </div>
-              {k.context && (
-                <div className="pl-1 text-xs" style={{ color: "#3A4150" }}>
-                  <span className="font-medium" style={{ color: INK }}>{k.context.title}</span>
-                  {k.context.publication && <span style={{ color: SUBTEXT }}> — {k.context.publication}</span>}
-                  {k.context.snippet && (
-                    <div
-                      className="mt-1 italic"
-                      style={{ color: SUBTEXT }}
-                      dangerouslySetInnerHTML={{ __html: `\u201c${k.context.snippet}\u201d` }}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
+            <KeywordRow key={k.key} k={k} topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} onPivot={onPivot} />
           ))}
         </div>
       )}
@@ -398,7 +456,56 @@ function KeywordPanel({ keywords, loading, phraseLength, onPhraseLengthChange, o
   );
 }
 
-function ContextPanel({ sections, loading, totalMatched }) {
+function ContextRow({ s, topic, dateRange, selectedPubs, totalMatched }) {
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [articles, setArticles] = useState([]);
+
+  function toggle() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && articles.length === 0) {
+      setLoading(true);
+      fetchArticlesForSection(topic, s.name, dateRange, selectedPubs)
+        .then(setArticles)
+        .catch(() => setArticles([]))
+        .finally(() => setLoading(false));
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1 border-b pb-3 last:border-0 last:pb-0" style={{ borderColor: "#E3DDCE" }}>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={toggle}
+          className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors hover:opacity-80"
+          style={{ background: INK, color: PAPER }}
+        >
+          <List size={12} /> {s.name}
+        </button>
+        <span className="text-xs" style={{ color: SUBTEXT }}>
+          {s.count} articles ({((s.count / totalMatched) * 100).toFixed(0)}%)
+        </span>
+      </div>
+      {s.context && (
+        <div className="pl-1 text-xs" style={{ color: "#3A4150" }}>
+          <span className="font-medium" style={{ color: INK }}>{s.context.title}</span>
+          {s.context.publication && <span style={{ color: SUBTEXT }}> — {s.context.publication}</span>}
+          {s.context.snippet && (
+            <div
+              className="mt-1 italic"
+              style={{ color: SUBTEXT }}
+              dangerouslySetInnerHTML={{ __html: `\u201c${s.context.snippet}\u201d` }}
+            />
+          )}
+        </div>
+      )}
+      <ArticleListReveal expanded={expanded} loading={loading} articles={articles} />
+    </div>
+  );
+}
+
+function ContextPanel({ sections, loading, totalMatched, topic, dateRange, selectedPubs }) {
   return (
     <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
       <div className="mb-1 font-serif text-lg" style={{ color: INK }}>
@@ -406,7 +513,7 @@ function ContextPanel({ sections, loading, totalMatched }) {
       </div>
       <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
         Which editorial sections this topic is covered in, based on each article&apos;s actual
-        section metadata — not text mining, so it&apos;s unaffected by boilerplate phrasing.
+        section metadata. Click a section to see its matching articles.
       </div>
       {loading ? (
         <div className="flex items-center gap-2 py-6 text-xs" style={{ color: SUBTEXT }}>
@@ -419,29 +526,7 @@ function ContextPanel({ sections, loading, totalMatched }) {
       ) : (
         <div className="flex flex-col gap-3">
           {sections.map((s) => (
-            <div key={s.name} className="flex flex-col gap-1 border-b pb-3 last:border-0 last:pb-0" style={{ borderColor: "#E3DDCE" }}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full px-3 py-1 text-xs font-medium" style={{ background: INK, color: PAPER }}>
-                  {s.name}
-                </span>
-                <span className="text-xs" style={{ color: SUBTEXT }}>
-                  {s.count} articles ({((s.count / totalMatched) * 100).toFixed(0)}%)
-                </span>
-              </div>
-              {s.context && (
-                <div className="pl-1 text-xs" style={{ color: "#3A4150" }}>
-                  <span className="font-medium" style={{ color: INK }}>{s.context.title}</span>
-                  {s.context.publication && <span style={{ color: SUBTEXT }}> — {s.context.publication}</span>}
-                  {s.context.snippet && (
-                    <div
-                      className="mt-1 italic"
-                      style={{ color: SUBTEXT }}
-                      dangerouslySetInnerHTML={{ __html: `\u201c${s.context.snippet}\u201d` }}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
+            <ContextRow key={s.name} s={s} topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} totalMatched={totalMatched} />
           ))}
         </div>
       )}
@@ -493,17 +578,27 @@ function ContextTrendChart({ monthlyBySection, sections, totalMatched }) {
   );
 }
 
-function ContentInsightsView({ keywords, keywordsLoading, phraseLength, onPhraseLengthChange, contexts, contextsLoading, onPivotSearch }) {
+function ContentInsightsView({ keywords, keywordsLoading, phraseLength, onPhraseLengthChange, contexts, contextsLoading, onPivotSearch, topic, dateRange, selectedPubs }) {
   return (
     <div className="flex flex-col gap-8">
       <ContextTrendChart monthlyBySection={contexts.monthlyBySection} sections={contexts.sections} totalMatched={contexts.totalMatched} />
-      <ContextPanel sections={contexts.sections} loading={contextsLoading} totalMatched={contexts.totalMatched} />
+      <ContextPanel
+        sections={contexts.sections}
+        loading={contextsLoading}
+        totalMatched={contexts.totalMatched}
+        topic={topic}
+        dateRange={dateRange}
+        selectedPubs={selectedPubs}
+      />
       <KeywordPanel
         keywords={keywords}
         loading={keywordsLoading}
         phraseLength={phraseLength}
         onPhraseLengthChange={onPhraseLengthChange}
         onPivot={onPivotSearch}
+        topic={topic}
+        dateRange={dateRange}
+        selectedPubs={selectedPubs}
       />
     </div>
   );
@@ -1453,6 +1548,9 @@ export default function OmeaDashboard() {
                         contexts={contexts}
                         contextsLoading={contextsLoading}
                         onPivotSearch={handlePivot}
+                        topic={topic.label}
+                        dateRange={dateRange}
+                        selectedPubs={selectedPubs}
                       />
                     )}
                   </>
