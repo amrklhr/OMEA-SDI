@@ -140,6 +140,56 @@ export async function fetchMonthlyVolumeByPublication(topic, dateRange = {}, int
  * publication — feeds the "Revenue generated" chart. Same structure as
  * fetchMonthlyVolumeByPublication but summing emv instead of counting docs.
  */
+/**
+ * Full multi-KPI breakdown by publication and period, in one query — feeds
+ * the Data Analyst's clustered comparison chart. Returns
+ * { [publication]: { [period]: { volume, sentiment, impressions, engagement, ctr, emv, roi } } }
+ * so switching which KPI is displayed doesn't require a new request.
+ */
+export async function fetchMonthlyKpiBreakdown(topic, dateRange = {}, interval = "month", publications = null) {
+  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange, publications),
+    aggs: {
+      by_publication: {
+        terms: { field: "publication", size: 30 },
+        aggs: {
+          periods: {
+            date_histogram: { field: "date", calendar_interval: interval, format },
+            aggs: {
+              avg_sentiment: { avg: { field: "sentiment_score" } },
+              total_impressions: { sum: { field: "estimated_impressions" } },
+              avg_engagement_rate: { avg: { field: "engagement_rate" } },
+              avg_ctr: { avg: { field: "ctr" } },
+              total_emv: { sum: { field: "emv" } },
+              avg_roi_index: { avg: { field: "roi_index" } },
+            },
+          },
+        },
+      },
+    },
+  };
+  const data = await runQuery(body);
+  const result = {};
+  for (const pubBucket of data.aggregations.by_publication.buckets) {
+    const periods = {};
+    for (const pb of pubBucket.periods.buckets) {
+      periods[pb.key_as_string] = {
+        volume: pb.doc_count,
+        sentiment: pb.avg_sentiment.value ?? 0,
+        impressions: pb.total_impressions.value ?? 0,
+        engagement: pb.avg_engagement_rate.value ?? 0,
+        ctr: pb.avg_ctr.value ?? 0,
+        emv: pb.total_emv.value ?? 0,
+        roi: pb.avg_roi_index.value ?? 0,
+      };
+    }
+    result[pubBucket.key] = periods;
+  }
+  return result;
+}
+
 export async function fetchMonthlyEmvByPublication(topic, dateRange = {}, interval = "month") {
   const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
   const body = {

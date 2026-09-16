@@ -4,12 +4,13 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, Legend, ScatterChart, Scatter, ZAxis, AreaChart, Area,
 } from "recharts";
 import {
-  Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, BookOpen, Check, List,
+  Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, BookOpen, Check, List, MessageCircle,
 } from "lucide-react";
 import {
   fetchTopicData, fetchKeywordProminence, fetchContextBreakdown,
   fetchSentimentDistribution, fetchArticleSample,
   fetchArticlesForKeyword, fetchArticlesForSection,
+  fetchMonthlyKpiBreakdown,
 } from "./opensearchClient";
 
 const INK = "#1B2430";
@@ -1003,7 +1004,97 @@ function CumulativeCoverageChart({ topic, selectedPubs }) {
   );
 }
 
-function DataAnalystView({ topic, selectedPubs, sentimentDistribution, articleSample, analystExtrasLoading }) {
+const CLUSTER_KPIS = [
+  { key: "volume", label: "Coverage Volume", fmt: fmtNum },
+  { key: "sentiment", label: "Avg. Sentiment", fmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) },
+  { key: "impressions", label: "Est. Impressions", fmt: fmtNum },
+  { key: "engagement", label: "Engagement Rate", fmt: fmtPct },
+  { key: "ctr", label: "Avg. CTR", fmt: fmtPct },
+  { key: "emv", label: "Earned Media Value", fmt: fmtMoney },
+  { key: "roi", label: "ROI Index", fmt: fmtPct },
+];
+
+function KpiClusteredChart({ kpiByPublication, selectedPubs, loading }) {
+  const [selectedKpi, setSelectedKpi] = useState("volume");
+  const kpiDef = CLUSTER_KPIS.find((k) => k.key === selectedKpi);
+
+  // Slice the combined per-publication/per-period/per-KPI data down to just
+  // the currently selected KPI, so switching KPIs is instant (no refetch).
+  const sliced = {};
+  for (const pub of selectedPubs) {
+    sliced[pub] = {};
+    const periods = kpiByPublication[pub] || {};
+    for (const [period, values] of Object.entries(periods)) {
+      sliced[pub][period] = values[selectedKpi];
+    }
+  }
+  const sortedPeriods = combinedMonths(sliced, selectedPubs);
+  const chartData = sortedPeriods.map((period) => {
+    const row = { period };
+    selectedPubs.forEach((pub) => { row[pub] = sliced[pub]?.[period] ?? 0; });
+    return row;
+  });
+
+  const allValues = chartData.flatMap((row) => selectedPubs.map((p) => row[p]));
+  const stats = computeStats(allValues);
+
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
+        <div className="font-serif text-lg" style={{ color: INK }}>
+          KPI comparison by channel
+        </div>
+      </div>
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {CLUSTER_KPIS.map((k) => (
+          <button
+            key={k.key}
+            onClick={() => setSelectedKpi(k.key)}
+            className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+            style={{
+              borderColor: selectedKpi === k.key ? INK : "#D9D2C2",
+              background: selectedKpi === k.key ? INK : "transparent",
+              color: selectedKpi === k.key ? PAPER : SUBTEXT,
+            }}
+          >
+            {k.label}
+          </button>
+        ))}
+      </div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        {kpiDef.label} per period, one bar per channel — compare which publications drove a
+        metric in a given period, not just the combined total.
+      </div>
+      {loading ? (
+        <div className="flex items-center gap-2 py-6 text-xs" style={{ color: SUBTEXT }}>
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : (
+        <>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+              <CartesianGrid stroke="#E3DDCE" vertical={false} />
+              <XAxis dataKey="period" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(chartData.length / 8)} />
+              <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={kpiDef.fmt} />
+              <Tooltip formatter={(v) => [kpiDef.fmt(v), kpiDef.label]} contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              {selectedPubs.map((pub, i) => (
+                <Bar key={pub} dataKey={pub} fill={colorFor(pub, i)} />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+          <StatsRow items={[
+            { label: "Total", value: kpiDef.fmt(stats.total) },
+            { label: "Avg", value: kpiDef.fmt(stats.avg) },
+            { label: "Median", value: kpiDef.fmt(stats.median) },
+          ]} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function DataAnalystView({ topic, selectedPubs, sentimentDistribution, articleSample, analystExtrasLoading, kpiByPublication, kpiByPublicationLoading }) {
   const [sortKey, setSortKey] = useState("articles");
   const [sortDir, setSortDir] = useState("desc");
   const [expanded, setExpanded] = useState(null);
@@ -1047,6 +1138,8 @@ function DataAnalystView({ topic, selectedPubs, sentimentDistribution, articleSa
       </div>
 
       <ShareOfVoiceStackedBar topic={topic} selectedPubs={selectedPubs} />
+
+      <KpiClusteredChart kpiByPublication={kpiByPublication} selectedPubs={selectedPubs} loading={kpiByPublicationLoading} />
 
       <div className="grid gap-8 md:grid-cols-2">
         <SentimentHistogram data={sentimentDistribution} loading={analystExtrasLoading} />
@@ -1304,6 +1397,110 @@ function readUrlParams() {
   return Object.fromEntries(new URLSearchParams(window.location.search).entries());
 }
 
+function ChatWidget({ getContext }) {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, loading]);
+
+  async function sendMessage(e) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || loading) return;
+    const newMessages = [...messages, { role: "user", content: text }];
+    setMessages(newMessages);
+    setInput("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
+          context: getContext(),
+        }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setMessages((m) => [...m, { role: "assistant", content: `(Error: ${data.error}${data.detail ? " — " + data.detail : ""})` }]);
+      } else {
+        setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
+      }
+    } catch (err) {
+      setMessages((m) => [...m, { role: "assistant", content: `(Network error reaching the assistant: ${String(err)})` }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      {open && (
+        <div
+          className="fixed bottom-24 right-6 z-50 flex w-96 flex-col rounded-sm border shadow-lg"
+          style={{ borderColor: "#D9D2C2", background: PAPER, height: 480 }}
+        >
+          <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "#D9D2C2", background: INK }}>
+            <span className="font-serif text-sm" style={{ color: PAPER }}>OMEA Data Assistant</span>
+            <button onClick={() => setOpen(false)} style={{ color: PAPER }}>✕</button>
+          </div>
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3" style={{ background: "#FBFAF6" }}>
+            {messages.length === 0 && (
+              <div className="text-xs italic" style={{ color: SUBTEXT }}>
+                Ask about the live data — e.g. "What's Facebook's ROI in 2018?" or "Which publication has the best sentiment?"
+              </div>
+            )}
+            {messages.map((m, i) => (
+              <div key={i} className={`mb-3 flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className="max-w-[85%] rounded-sm px-3 py-2 text-xs"
+                  style={{
+                    background: m.role === "user" ? INK : "#EFEAE0",
+                    color: m.role === "user" ? PAPER : INK,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {m.content}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div className="flex items-center gap-2 text-xs" style={{ color: SUBTEXT }}>
+                <Loader2 size={12} className="animate-spin" /> Querying live data…
+              </div>
+            )}
+          </div>
+          <form onSubmit={sendMessage} className="flex items-center gap-2 border-t p-3" style={{ borderColor: "#D9D2C2" }}>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask a question..."
+              className="flex-1 rounded-sm border px-3 py-2 text-xs outline-none"
+              style={{ borderColor: "#D9D2C2", background: "#FBFAF6", color: INK }}
+            />
+            <button type="submit" disabled={loading} className="rounded-sm px-3 py-2 text-xs font-medium disabled:opacity-50" style={{ background: INK, color: PAPER }}>
+              Send
+            </button>
+          </form>
+        </div>
+      )}
+      <button
+        onClick={() => setOpen(!open)}
+        className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
+        style={{ background: INK, color: GOLD }}
+        title="Ask the OMEA data assistant"
+      >
+        <MessageCircle size={24} />
+      </button>
+    </>
+  );
+}
+
 export default function OmeaDashboard() {
   const initialParams = useRef(readUrlParams()).current;
   const initialPubsRef = useRef(initialParams.pubs ? initialParams.pubs.split(",") : null);
@@ -1330,6 +1527,9 @@ export default function OmeaDashboard() {
   const [sentimentDistribution, setSentimentDistribution] = useState([]);
   const [articleSample, setArticleSample] = useState([]);
   const [analystExtrasLoading, setAnalystExtrasLoading] = useState(false);
+
+  const [kpiByPublication, setKpiByPublication] = useState({});
+  const [kpiByPublicationLoading, setKpiByPublicationLoading] = useState(false);
 
   const { topic, loading, error } = useTopic(currentTopicName, dateRange, interval);
 
@@ -1400,6 +1600,19 @@ export default function OmeaDashboard() {
       .finally(() => { if (!cancelled) setAnalystExtrasLoading(false); });
     return () => { cancelled = true; };
   }, [topic?.label, dateFrom, dateTo, selectedPubs, persona]);
+
+  // KPI-by-publication breakdown for the clustered comparison chart —
+  // also analyst-only, and depends on interval too since it's period-based.
+  useEffect(() => {
+    if (!topic?.label || persona !== "analyst" || selectedPubs.length === 0) return;
+    let cancelled = false;
+    setKpiByPublicationLoading(true);
+    fetchMonthlyKpiBreakdown(topic.label, dateRange, interval, selectedPubs)
+      .then((data) => { if (!cancelled) setKpiByPublication(data); })
+      .catch(() => { if (!cancelled) setKpiByPublication({}); })
+      .finally(() => { if (!cancelled) setKpiByPublicationLoading(false); });
+    return () => { cancelled = true; };
+  }, [topic?.label, dateFrom, dateTo, interval, selectedPubs, persona]);
 
   function handleSearch(e) {
     e.preventDefault();
@@ -1538,6 +1751,8 @@ export default function OmeaDashboard() {
                         sentimentDistribution={sentimentDistribution}
                         articleSample={articleSample}
                         analystExtrasLoading={analystExtrasLoading}
+                        kpiByPublication={kpiByPublication}
+                        kpiByPublicationLoading={kpiByPublicationLoading}
                       />
                     ) : (
                       <ContentInsightsView
@@ -1560,6 +1775,13 @@ export default function OmeaDashboard() {
           </>
         )}
       </div>
+      <ChatWidget getContext={() => ({
+        topic: topic?.label,
+        dateFrom,
+        dateTo,
+        interval,
+        selectedPubs,
+      })} />
     </div>
   );
 }
