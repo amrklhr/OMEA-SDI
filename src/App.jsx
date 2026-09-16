@@ -969,34 +969,33 @@ function WordCountEngagementScatter({ sample, selectedPubs, loading }) {
   );
 }
 
-function CumulativeCoverageChart({ topic, selectedPubs }) {
+function CoverageTrendBarChart({ topic, selectedPubs }) {
   const sortedMonths = combinedMonths(topic.monthlyByPublication, selectedPubs);
-  let running = 0;
   const periodTotals = [];
   const data = sortedMonths.map((m) => {
     const periodTotal = selectedPubs.reduce((sum, p) => sum + (topic.monthlyByPublication[p]?.[m] || 0), 0);
     periodTotals.push(periodTotal);
-    running += periodTotal;
-    return { m, cumulative: running };
+    return { m, total: periodTotal };
   });
   const stats = computeStats(periodTotals);
   return (
     <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
-      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Cumulative coverage growth</div>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Coverage trend, total publications</div>
       <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-        Running total of articles over time — shows overall momentum rather than period-to-period noise.
+        Total article volume per period, summed across all selected channels — shows
+        period-to-period trend directly, not a running cumulative total.
       </div>
       <ResponsiveContainer width="100%" height={220}>
-        <AreaChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+        <BarChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
           <CartesianGrid stroke="#E3DDCE" vertical={false} />
           <XAxis dataKey="m" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(data.length / 8)} />
           <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} />
-          <Tooltip contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} formatter={(v) => [fmtNum(v), "Cumulative articles"]} />
-          <Area type="monotone" dataKey="cumulative" stroke={INK} fill={GOLD} fillOpacity={0.3} strokeWidth={2} />
-        </AreaChart>
+          <Tooltip contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} formatter={(v) => [fmtNum(v), "Articles"]} />
+          <Bar dataKey="total" fill={GOLD} />
+        </BarChart>
       </ResponsiveContainer>
       <StatsRow items={[
-        { label: "Total", value: fmtNum(running) },
+        { label: "Total", value: fmtNum(stats.total) },
         { label: "Avg / period", value: stats.avg.toFixed(1) },
         { label: "Median / period", value: fmtNum(stats.median) },
       ]} />
@@ -1151,7 +1150,7 @@ function DataAnalystView({ topic, selectedPubs, sentimentDistribution, articleSa
         <WordCountEngagementScatter sample={articleSample} selectedPubs={selectedPubs} loading={analystExtrasLoading} />
       </div>
 
-      <CumulativeCoverageChart topic={topic} selectedPubs={selectedPubs} />
+      <CoverageTrendBarChart topic={topic} selectedPubs={selectedPubs} />
 
       <div className="overflow-x-auto rounded-sm border" style={{ borderColor: "#D9D2C2" }}>
         <table className="w-full border-collapse text-sm">
