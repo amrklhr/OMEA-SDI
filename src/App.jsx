@@ -1101,7 +1101,7 @@ function RevenueChart({ monthlyEmvByPublication, selectedPubs }) {
   );
 }
 
-function MarketingOwnerView({ topic, selectedPubs, priorSummary }) {
+function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo }) {
   const pubs = topic.publications.filter((p) => selectedPubs.includes(p.name));
   const volume = pubs.reduce((sum, p) => sum + p.articles, 0);
   const impressions = pubs.reduce((sum, p) => sum + p.impressions, 0);
@@ -2340,7 +2340,7 @@ export default function OmeaDashboard() {
                   <>
                     <PublicationFilter allPubs={topic.publications} selected={selectedPubs} onChange={setSelectedPubs} />
                     {persona === "owner" ? (
-                      <MarketingOwnerView topic={topic} selectedPubs={selectedPubs} priorSummary={priorSummary} />
+                      <MarketingOwnerView topic={topic} selectedPubs={selectedPubs} priorSummary={priorSummary} dateTo={dateTo} />
                     ) : persona === "analyst" ? (
                       <DataAnalystView
                         topic={topic}
