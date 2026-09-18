@@ -715,14 +715,22 @@ function categoryFilter(categoryId, dateRange = {}) {
  * candidate subjects specific to this category, (2) a batched msearch
  * scores each candidate on the actual KPI fields. Candidates with fewer
  * than 3 matching articles are dropped as too sparse to be meaningful.
+ *
+ * phraseLength (1-4) picks single words vs shingled multi-word phrases,
+ * same PHRASE_FIELD mechanism and same shingle sub-fields as Related
+ * Keywords — defaults to 2 words, since single words ("growth", "market")
+ * read as noise where 2-word phrases ("trade war", "interest rates") read
+ * as actual topics.
  */
-export async function fetchCategoryLeaderboard(categoryId, dateRange = {}) {
+export async function fetchCategoryLeaderboard(categoryId, dateRange = {}, phraseLength = 2) {
   const catFilter = categoryFilter(categoryId, dateRange);
+  const field = PHRASE_FIELD[phraseLength] || "article";
+  const fetchSize = phraseLength > 1 ? 40 : 25;
 
   const candidatesData = await runQuery({
     size: 0,
     query: catFilter,
-    aggs: { subjects: { significant_text: { field: "article", size: 25 } } },
+    aggs: { subjects: { significant_text: { field, size: fetchSize } } },
   });
   const buckets = candidatesData.aggregations?.subjects?.buckets || [];
   const candidates = buckets
@@ -731,7 +739,7 @@ export async function fetchCategoryLeaderboard(categoryId, dateRange = {}) {
     .slice(0, 15);
 
   if (candidates.length === 0) {
-    return { category: categoryId, dateRange, subjects: [] };
+    return { category: categoryId, dateRange, phraseLength, subjects: [] };
   }
 
   const ndjsonLines = [];
@@ -759,7 +767,7 @@ export async function fetchCategoryLeaderboard(categoryId, dateRange = {}) {
     }))
     .filter((s) => s.articleCount >= 3);
 
-  return { category: categoryId, dateRange, subjects };
+  return { category: categoryId, dateRange, phraseLength, subjects };
 }
 
 /** Matching articles for one subject within a category — powers the click-to-expand row. */
@@ -772,6 +780,26 @@ export async function fetchCategorySubjectArticles(categoryId, subjectKey, dateR
     _source: ["title", "publication", "date"],
   });
   return data.hits.hits.map((h) => h._source);
+}
+
+/**
+ * Coverage volume for one subject within a category, broken into periods —
+ * this is the actual monthly/quarterly/yearly trend, distinct from the
+ * leaderboard's single-number totals for the whole selected date range.
+ * interval: "month" | "quarter" | "year", same as the rest of the dashboard.
+ */
+export async function fetchCategorySubjectTrend(categoryId, subjectKey, dateRange = {}, interval = "month") {
+  const catFilter = categoryFilter(categoryId, dateRange);
+  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
+  const data = await runQuery({
+    size: 0,
+    query: { bool: { must: [catFilter, { match_phrase: { article: subjectKey } }] } },
+    aggs: {
+      periods: { date_histogram: { field: "date", calendar_interval: interval, format } },
+    },
+  });
+  const buckets = data.aggregations?.periods?.buckets || [];
+  return buckets.map((b) => ({ period: b.key_as_string, count: b.doc_count }));
 }
 
 /** Fetches everything a topic search needs, in parallel (keywords/contexts load separately). */
