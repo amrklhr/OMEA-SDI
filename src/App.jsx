@@ -841,9 +841,9 @@ function BrandComparisonView({ dateRange, interval }) {
     <div className="flex flex-col gap-8">
       {/* brand input form */}
       <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
-        <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Compare brands</div>
+        <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Compare subjects</div>
         <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-          Enter 2 to 5 brand names, topics, or entities to compare their media coverage side by side.
+          Enter 2 to 5 subjects — brands, topics, or entities — to compare their media coverage side by side.
         </div>
         <form onSubmit={handleCompare} className="flex flex-col gap-3">
           <div className="flex flex-wrap gap-2">
@@ -853,7 +853,7 @@ function BrandComparisonView({ dateRange, interval }) {
                 <input
                   value={val}
                   onChange={(e) => updateBrand(idx, e.target.value)}
-                  placeholder={`Brand ${idx + 1}`}
+                  placeholder={`Subject ${idx + 1}`}
                   className="w-36 rounded-sm border px-2 py-1.5 text-sm outline-none"
                   style={{ borderColor: "#D9D2C2", background: "#FBFAF6", color: INK }}
                 />
@@ -866,7 +866,7 @@ function BrandComparisonView({ dateRange, interval }) {
           <div className="flex items-center gap-3">
             {brandInputs.length < 5 && (
               <button type="button" onClick={addBrand} className="flex items-center gap-1 text-xs font-medium" style={{ color: SUBTEXT }}>
-                <Plus size={13} /> Add brand
+                <Plus size={13} /> Add subject
               </button>
             )}
             <button
@@ -888,7 +888,7 @@ function BrandComparisonView({ dateRange, interval }) {
           <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
             <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Coverage volume over time</div>
             <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-              Article count per period for each brand. Shows when coverage rises, falls, or spikes relative to competitors.
+              Article count per period for each subject. Shows when coverage rises, falls, or spikes relative to competitors.
             </div>
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={trendData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
@@ -908,7 +908,7 @@ function BrandComparisonView({ dateRange, interval }) {
           <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
             <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Share of voice</div>
             <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-              Relative coverage volume across the compared brands. Who dominates the media conversation.
+              Relative coverage volume across the compared subjects. Who dominates the media conversation.
             </div>
             <ResponsiveContainer width="100%" height={Math.max(120, brandData.length * 50)}>
               <BarChart data={brandData.map((b) => ({ name: b.brand, volume: b.volume }))} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 0 }}>
@@ -927,11 +927,31 @@ function BrandComparisonView({ dateRange, interval }) {
             }))} />
           </div>
 
+          {/* impressions comparison */}
+          <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+            <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Impressions comparison</div>
+            <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+              Total estimated impressions per subject. Higher reach doesn't necessarily mean better
+              received coverage — compare against sentiment below.
+            </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={brandData.map((b) => ({ name: b.brand, impressions: b.impressions }))} margin={{ top: 5, right: 10, left: 10, bottom: 0 }}>
+                <CartesianGrid stroke="#E3DDCE" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: INK }} />
+                <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+                <Tooltip formatter={(v) => [fmtNum(v), "Impressions"]} contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} />
+                <Bar dataKey="impressions">
+                  {brandData.map((b, i) => <Cell key={b.brand} fill={BRAND_COLORS[i]} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
           {/* sentiment comparison */}
           <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
             <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Sentiment comparison</div>
             <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-              Average sentiment per brand. Positive values indicate favorable coverage, negative values indicate critical coverage.
+              Average sentiment per subject. Positive values indicate favorable coverage, negative values indicate critical coverage.
             </div>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={brandData.map((b) => ({ name: b.brand, sentiment: b.sentiment }))} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
@@ -950,7 +970,7 @@ function BrandComparisonView({ dateRange, interval }) {
           <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
             <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Sentiment trend over time</div>
             <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-              How each brand's media sentiment evolves period by period.
+              How each subject's media sentiment evolves period by period.
             </div>
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={sentimentTrendData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
@@ -971,8 +991,8 @@ function BrandComparisonView({ dateRange, interval }) {
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr style={{ background: INK }}>
-                  {["Brand", "Articles", "Sentiment", "Impressions", "EMV", "Engagement", "ROI Index"].map((h) => (
-                    <th key={h} className="whitespace-nowrap px-4 py-3 text-xs font-medium" style={{ color: PAPER, textAlign: h === "Brand" ? "left" : "right" }}>{h}</th>
+                  {["Subject", "Articles", "Sentiment", "Impressions", "EMV", "Engagement", "ROI Index"].map((h) => (
+                    <th key={h} className="whitespace-nowrap px-4 py-3 text-xs font-medium" style={{ color: PAPER, textAlign: h === "Subject" ? "left" : "right" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -999,7 +1019,7 @@ function BrandComparisonView({ dateRange, interval }) {
 
       {hasCompared && brandData.length === 0 && !loading && (
         <div className="rounded-sm border px-4 py-6 text-sm" style={{ borderColor: "#D9D2C2", background: "#FBFAF6", color: SUBTEXT }}>
-          No data found for the selected brands. Try different names or widen the date range.
+          No data found for the selected subjects. Try different names or widen the date range.
         </div>
       )}
 
@@ -1021,7 +1041,7 @@ function BrandInsightsPanel({ brandData, totalVolume }) {
     {
       type: "action",
       title: "Share of voice leader",
-      text: `${leader.brand} dominates with ${fmtNum(leader.volume)} articles — ${totalVolume > 0 ? ((leader.volume / totalVolume) * 100).toFixed(0) : 0}% of total coverage across all compared brands.`,
+      text: `${leader.brand} dominates with ${fmtNum(leader.volume)} articles — ${totalVolume > 0 ? ((leader.volume / totalVolume) * 100).toFixed(0) : 0}% of total coverage across all compared subjects.`,
       recommendation: `Monitor ${leader.brand} closely as the benchmark. Closing the gap requires consistent outreach and newsworthy angles.`,
     },
     {
@@ -1037,7 +1057,7 @@ function BrandInsightsPanel({ brandData, totalVolume }) {
       type: "warning",
       title: "Reputation risk",
       text: `${worstSentiment.brand} has the lowest sentiment (${(worstSentiment.sentiment >= 0 ? "+" : "") + worstSentiment.sentiment.toFixed(2)}).`,
-      recommendation: `If this is your brand, prioritize positive story placement and proactive media engagement to shift the narrative.`,
+      recommendation: `If this is a subject you are tracking closely, prioritize positive story placement and proactive media engagement to shift the narrative.`,
     });
   }
 
@@ -2393,7 +2413,7 @@ export default function OmeaDashboard() {
               {[
                 { id: "owner", label: "Marketing Owner" },
                 { id: "analyst", label: "Data Analyst" },
-                { id: "brands", label: "Brand Compare" },
+                { id: "brands", label: "Subject Compare" },
                 { id: "bestworst", label: "Best & Worst" },
                 { id: "insights", label: "Content Insights" },
                 { id: "methodology", label: "How It Works" },
