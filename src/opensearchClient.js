@@ -725,26 +725,38 @@ function categoryFilter(categoryId, dateRange = {}) {
 export async function fetchCategoryLeaderboard(categoryId, dateRange = {}, phraseLength = 2) {
   const catFilter = categoryFilter(categoryId, dateRange);
   const field = PHRASE_FIELD[phraseLength] || "article";
-  // multi-word shingle fields (bigram/trigram/quadgram) have far higher term
-  // cardinality than single words, so significant_text on them is much more
-  // expensive to compute — keep fetchSize modest and bound the query with
-  // timeout + terminate_after so a slow shard returns partial results
-  // instead of hanging past Vercel's function timeout (which shows up as a
-  // 502, not a normal error)
-  const fetchSize = phraseLength > 1 ? 20 : 25;
+  // Multi-word shingle fields (bigram/trigram/quadgram) are much more
+  // expensive for significant_text than single words, not mainly because
+  // of term-dictionary size but because significant_text re-fetches and
+  // re-tokenizes each matching document's _source to filter near-duplicate
+  // text (filter_duplicate_text, on by default). That per-document cost is
+  // what was timing out. We turn it off here — syndicated near-duplicates
+  // are rare in this corpus outside the documented June 2019 anomaly, so
+  // the trade-off (slightly less deduping) is worth the reliability.
+  const isMultiWord = phraseLength > 1;
+  const fetchSize = isMultiWord ? 15 : 25;
 
   const candidatesData = await runQuery({
     size: 0,
-    timeout: "8s",
-    terminate_after: 15000,
+    timeout: "6s",
+    terminate_after: isMultiWord ? 3000 : 15000,
     query: catFilter,
-    aggs: { subjects: { significant_text: { field, size: fetchSize } } },
+    aggs: {
+      subjects: {
+        significant_text: {
+          field,
+          size: fetchSize,
+          shard_size: fetchSize * 2,
+          filter_duplicate_text: !isMultiWord,
+        },
+      },
+    },
   });
   const buckets = candidatesData.aggregations?.subjects?.buckets || [];
   const candidates = buckets
     .map((b) => b.key)
     .filter((k) => !containsStopword(k))
-    .slice(0, phraseLength > 1 ? 10 : 15);
+    .slice(0, isMultiWord ? 8 : 15);
 
   if (candidates.length === 0) {
     return { category: categoryId, dateRange, phraseLength, subjects: [] };

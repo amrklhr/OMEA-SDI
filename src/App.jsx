@@ -123,6 +123,31 @@ function StatsRow({ items }) {
   );
 }
 
+// Shared 1-4 word phrase length control — same rounded-pill style everywhere
+// it appears (Content Insights, Best & Worst), so switching tabs doesn't
+// mean re-learning a different control for the same concept.
+function PhraseLengthControl({ value, onChange, label = "Phrase length:" }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-xs" style={{ color: SUBTEXT }}>{label}</span>
+      {[1, 2, 3, 4].map((n) => (
+        <button
+          key={n}
+          onClick={() => onChange(n)}
+          className="rounded-full border px-2.5 py-1 text-xs font-medium transition-colors"
+          style={{
+            borderColor: value === n ? INK : "#D9D2C2",
+            background: value === n ? INK : "transparent",
+            color: value === n ? PAPER : SUBTEXT,
+          }}
+        >
+          {n}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function KpiCard({ icon: Icon, label, value, tone, delta }) {
   const color = tone === "pos" ? POS : tone === "neg" ? NEG : INK;
   // delta is a percent change vs prior period — positive means up, negative means down
@@ -565,21 +590,7 @@ function KeywordPanel({ keywords, loading, phraseLength, onPhraseLengthChange, o
         <div className="font-serif text-lg" style={{ color: INK }}>
           Related keywords
         </div>
-        <div className="flex rounded-sm border" style={{ borderColor: INK }}>
-          {LENGTHS.map((l) => (
-            <button
-              key={l.n}
-              onClick={() => onPhraseLengthChange(l.n)}
-              className="px-3 py-1.5 text-xs font-medium transition-colors"
-              style={{
-                background: phraseLength === l.n ? INK : "transparent",
-                color: phraseLength === l.n ? PAPER : INK,
-              }}
-            >
-              {l.label}
-            </button>
-          ))}
-        </div>
+        <PhraseLengthControl value={phraseLength} onChange={onPhraseLengthChange} />
       </div>
       <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
         Terms or phrases that appear unusually often in this topic&apos;s coverage. Click a
@@ -1095,14 +1106,13 @@ function BestWorstView({ dateRange, interval }) {
     <div className="flex flex-col gap-6">
       <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
         <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Best &amp; worst performing topics</div>
-        <div className="mb-4 flex flex-col gap-1.5 text-xs" style={{ color: SUBTEXT }}>
+        <div className="flex flex-col gap-1.5 text-xs" style={{ color: SUBTEXT }}>
           <p>
             <strong style={{ color: INK }}>What "subjects" are:</strong> the {phraseLength}-word phrase
             {phraseLength > 1 ? "s" : ""} most distinctively associated with the selected category, mined
             automatically from article text (the same significant_text method behind Related Keywords in
             Content Insights). They are not a fixed list — they change with the category, the phrase
-            length, and the date range below. Use the phrase length control to get shorter, noisier
-            single words or longer, more specific phrases.
+            length, and the date range below.
           </p>
           <p>
             <strong style={{ color: INK }}>What the ranking shows:</strong> one total figure per subject,
@@ -1112,8 +1122,11 @@ function BestWorstView({ dateRange, interval }) {
             articles.
           </p>
         </div>
+      </div>
 
-        <div className="mb-3 flex flex-wrap gap-1.5">
+      <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+        <div className="mb-3 text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Category</div>
+        <div className="flex flex-wrap gap-1.5">
           {CATEGORY_IDS.map((id) => (
             <button
               key={id}
@@ -1140,9 +1153,13 @@ function BestWorstView({ dateRange, interval }) {
             Other
           </button>
         </div>
+      </div>
 
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="flex gap-1.5">
+      <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+        <div className="mb-3 text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Ranking options</div>
+        <div className="flex flex-wrap items-center gap-6">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs" style={{ color: SUBTEXT }}>Rank by:</span>
             {[
               { id: "sentiment", label: "Sentiment" },
               { id: "engagement", label: "Engagement" },
@@ -1162,23 +1179,7 @@ function BestWorstView({ dateRange, interval }) {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs" style={{ color: SUBTEXT }}>Phrase length:</span>
-            {[1, 2, 3, 4].map((n) => (
-              <button
-                key={n}
-                onClick={() => setPhraseLength(n)}
-                className="rounded-full border px-2.5 py-1 text-xs font-medium transition-colors"
-                style={{
-                  borderColor: phraseLength === n ? INK : "#D9D2C2",
-                  background: phraseLength === n ? INK : "transparent",
-                  color: phraseLength === n ? PAPER : SUBTEXT,
-                }}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
+          <PhraseLengthControl value={phraseLength} onChange={setPhraseLength} />
         </div>
       </div>
 
