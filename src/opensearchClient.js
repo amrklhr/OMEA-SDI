@@ -622,6 +622,158 @@ export async function fetchKeywordProminence(topic, phraseLength = 1, dateRange 
   return keywords.map((k) => ({ ...k, context: contexts[k.key] }));
 }
 
+// ---------- Best & Worst: category leaderboards ----------
+//
+// A "category" here is not a real editorial field — the dataset's actual
+// section metadata is missing on ~55% of articles and inconsistent across
+// publications (e.g. "Tech by VICE", "Davos", "Wealth"), so it can't
+// support a clean 10-bucket taxonomy on its own. Instead each category is
+// defined as a documented set of assumption keywords, matched against
+// title/article the same way a topic search already works — same
+// mechanism as the rest of the dashboard, applied to a curated term set
+// instead of one free-text query. This keeps the method explainable and
+// inspectable rather than hiding a classifier behind the scenes.
+export const CATEGORIES = {
+  economy: {
+    label: "Economy",
+    terms: ["economy", "inflation", "GDP", "recession", "unemployment", "interest rate", "stock market", "trade", "tariff", "federal reserve", "jobs report"],
+  },
+  politics: {
+    label: "Politics",
+    terms: ["election", "congress", "senate", "president", "white house", "policy", "republican", "democrat", "legislation", "campaign", "vote"],
+  },
+  world: {
+    label: "World / International",
+    terms: ["foreign policy", "international", "overseas", "embassy", "United Nations", "NATO", "diplomat", "treaty", "refugee", "border crisis"],
+  },
+  sport: {
+    label: "Sport",
+    terms: ["NFL", "NBA", "MLB", "NHL", "soccer", "football", "basketball", "baseball", "Olympics", "championship", "athlete", "coach"],
+  },
+  food: {
+    label: "Food",
+    terms: ["restaurant", "recipe", "chef", "cuisine", "dining", "cooking", "snack", "beverage"],
+  },
+  health: {
+    label: "Health",
+    terms: ["hospital", "doctor", "disease", "virus", "vaccine", "healthcare", "medical", "patient", "FDA", "mental health"],
+  },
+  technology: {
+    label: "Technology",
+    terms: ["startup", "software", "app", "artificial intelligence", "smartphone", "silicon valley", "cybersecurity", "data breach", "tech company"],
+  },
+  media: {
+    label: "Media & Entertainment",
+    terms: ["film", "movie", "television", "streaming", "Netflix", "Hollywood", "celebrity", "music", "box office", "album"],
+  },
+  social: {
+    label: "Social Issues",
+    terms: ["racism", "gender", "inequality", "immigration", "protest", "civil rights", "discrimination", "feminism", "police brutality"],
+  },
+};
+export const CATEGORY_IDS = Object.keys(CATEGORIES);
+
+// bool "should" clause matching any of a category's keyword terms as a
+// phrase in the title or article body — minimum_should_match:1 means
+// "contains at least one of these terms"
+function categoryMatchClause(categoryId) {
+  const terms = CATEGORIES[categoryId].terms;
+  const should = [];
+  for (const t of terms) {
+    should.push({ match_phrase: { title: t } });
+    should.push({ match_phrase: { article: t } });
+  }
+  return { bool: { should, minimum_should_match: 1 } };
+}
+
+function categoryFilter(categoryId, dateRange = {}) {
+  const must = [];
+  if (dateRange.from || dateRange.to) {
+    const range = {};
+    if (dateRange.from) range.gte = dateRange.from;
+    if (dateRange.to) range.lte = dateRange.to;
+    must.push({ range: { date: range } });
+  }
+  if (categoryId === "other") {
+    // "Other" is the catch-all: articles matching none of the 9 defined
+    // categories' keyword sets
+    return {
+      bool: {
+        must,
+        must_not: CATEGORY_IDS.map((id) => categoryMatchClause(id)),
+      },
+    };
+  }
+  must.push(categoryMatchClause(categoryId));
+  return { bool: { must } };
+}
+
+/**
+ * Ranks the subjects (topics) most discussed within a category, by
+ * sentiment, engagement, and impressions, over a date range. Two-step
+ * process mirroring fetchKeywordProminence: (1) significant_text finds
+ * candidate subjects specific to this category, (2) a batched msearch
+ * scores each candidate on the actual KPI fields. Candidates with fewer
+ * than 3 matching articles are dropped as too sparse to be meaningful.
+ */
+export async function fetchCategoryLeaderboard(categoryId, dateRange = {}) {
+  const catFilter = categoryFilter(categoryId, dateRange);
+
+  const candidatesData = await runQuery({
+    size: 0,
+    query: catFilter,
+    aggs: { subjects: { significant_text: { field: "article", size: 25 } } },
+  });
+  const buckets = candidatesData.aggregations?.subjects?.buckets || [];
+  const candidates = buckets
+    .map((b) => b.key)
+    .filter((k) => !containsStopword(k))
+    .slice(0, 15);
+
+  if (candidates.length === 0) {
+    return { category: categoryId, dateRange, subjects: [] };
+  }
+
+  const ndjsonLines = [];
+  for (const c of candidates) {
+    ndjsonLines.push(JSON.stringify({ index: INDEX }));
+    ndjsonLines.push(JSON.stringify({
+      size: 0,
+      query: { bool: { must: [catFilter, { match_phrase: { article: c } }] } },
+      aggs: {
+        avg_sentiment: { avg: { field: "sentiment_score" } },
+        avg_engagement: { avg: { field: "engagement_rate" } },
+        total_impressions: { sum: { field: "estimated_impressions" } },
+      },
+    }));
+  }
+  const result = await runMsearch(ndjsonLines);
+
+  const subjects = result.responses
+    .map((resp, i) => ({
+      key: candidates[i],
+      articleCount: resp.hits.total.value,
+      avgSentiment: resp.aggregations.avg_sentiment.value ?? 0,
+      avgEngagement: resp.aggregations.avg_engagement.value ?? 0,
+      totalImpressions: resp.aggregations.total_impressions.value ?? 0,
+    }))
+    .filter((s) => s.articleCount >= 3);
+
+  return { category: categoryId, dateRange, subjects };
+}
+
+/** Matching articles for one subject within a category — powers the click-to-expand row. */
+export async function fetchCategorySubjectArticles(categoryId, subjectKey, dateRange = {}, size = 8) {
+  const catFilter = categoryFilter(categoryId, dateRange);
+  const data = await runQuery({
+    size,
+    query: { bool: { must: [catFilter, { match_phrase: { article: subjectKey } }] } },
+    sort: [{ date: { order: "desc" } }],
+    _source: ["title", "publication", "date"],
+  });
+  return data.hits.hits.map((h) => h._source);
+}
+
 /** Fetches everything a topic search needs, in parallel (keywords/contexts load separately). */
 export async function fetchTopicData(topic, dateRange = {}, interval = "month") {
   const [summary, monthlyByPublication, monthlyEmvByPublication, publications, spotlight] = await Promise.all([

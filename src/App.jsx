@@ -11,6 +11,7 @@ import {
   fetchSentimentDistribution, fetchArticleSample,
   fetchArticlesForKeyword, fetchArticlesForSection,
   fetchMonthlyKpiBreakdown, fetchBrandComparison, fetchPriorPeriodSummary,
+  CATEGORIES, CATEGORY_IDS, fetchCategoryLeaderboard, fetchCategorySubjectArticles,
 } from "./opensearchClient";
 
 const INK = "#1B2430";
@@ -1064,6 +1065,171 @@ function BrandInsightsPanel({ brandData, totalVolume }) {
   );
 }
 
+function BestWorstView({ dateRange }) {
+  const [category, setCategory] = useState("economy");
+  const [metric, setMetric] = useState("sentiment"); // sentiment | engagement | impressions
+  const [subjects, setSubjects] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchCategoryLeaderboard(category, dateRange)
+      .then((data) => { if (!cancelled) setSubjects(data.subjects); })
+      .catch((err) => { if (!cancelled) setError(err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [category, dateRange.from, dateRange.to]);
+
+  const metricKey = metric === "sentiment" ? "avgSentiment" : metric === "engagement" ? "avgEngagement" : "totalImpressions";
+  const sorted = [...subjects].sort((a, b) => b[metricKey] - a[metricKey]);
+  const top10 = sorted.slice(0, 10);
+  const bottom10 = [...sorted].reverse().slice(0, 10);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+        <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Best &amp; worst performing topics</div>
+        <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+          Ranks subjects discussed within a category by sentiment, engagement, or impressions, for the
+          date range selected above. Use the date controls to look at a specific month or quarter.
+          Categories are matched by a documented keyword set, the same method a topic search uses,
+          not by the dataset's real (and largely missing) section field — see How It Works for the term lists.
+        </div>
+
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {CATEGORY_IDS.map((id) => (
+            <button
+              key={id}
+              onClick={() => setCategory(id)}
+              className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+              style={{
+                borderColor: category === id ? INK : "#D9D2C2",
+                background: category === id ? INK : "transparent",
+                color: category === id ? PAPER : SUBTEXT,
+              }}
+            >
+              {CATEGORIES[id].label}
+            </button>
+          ))}
+          <button
+            onClick={() => setCategory("other")}
+            className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+            style={{
+              borderColor: category === "other" ? INK : "#D9D2C2",
+              background: category === "other" ? INK : "transparent",
+              color: category === "other" ? PAPER : SUBTEXT,
+            }}
+          >
+            Other
+          </button>
+        </div>
+
+        <div className="flex gap-1.5">
+          {[
+            { id: "sentiment", label: "Sentiment" },
+            { id: "engagement", label: "Engagement" },
+            { id: "impressions", label: "Impressions" },
+          ].map((m) => (
+            <button
+              key={m.id}
+              onClick={() => setMetric(m.id)}
+              className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+              style={{
+                borderColor: metric === m.id ? GOLD : "#D9D2C2",
+                background: metric === m.id ? "#FBF7EE" : "transparent",
+                color: metric === m.id ? INK : SUBTEXT,
+              }}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error && (
+        <div className="rounded-sm border px-4 py-3 text-xs" style={{ borderColor: "#D9D2C2", background: "#FBFAF6", color: NEG }}>
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 rounded-sm border py-10 text-sm" style={{ borderColor: "#D9D2C2", background: "#FBFAF6", color: SUBTEXT }}>
+          <Loader2 size={16} className="animate-spin" /> Loading subjects…
+        </div>
+      ) : subjects.length === 0 ? (
+        <div className="rounded-sm border px-4 py-6 text-sm" style={{ borderColor: "#D9D2C2", background: "#FBFAF6", color: SUBTEXT }}>
+          Not enough coverage in this category for the selected period. Try a wider date range or a different category.
+        </div>
+      ) : (
+        <div className="grid gap-6 md:grid-cols-2">
+          <SubjectLeaderboard title="Top 10" subjects={top10} metric={metric} metricKey={metricKey} category={category} dateRange={dateRange} tone="pos" />
+          <SubjectLeaderboard title="Bottom 10" subjects={bottom10} metric={metric} metricKey={metricKey} category={category} dateRange={dateRange} tone="neg" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SubjectLeaderboard({ title, subjects, metric, metricKey, category, dateRange, tone }) {
+  function formatMetric(v) {
+    if (metric === "impressions") return fmtNum(Math.round(v));
+    if (metric === "engagement") return fmtPct(v);
+    return (v >= 0 ? "+" : "") + v.toFixed(2);
+  }
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-3 flex items-center gap-2 font-serif text-lg" style={{ color: INK }}>
+        {tone === "pos" ? <Trophy size={16} style={{ color: GOLD }} /> : <TrendingDown size={16} style={{ color: NEG }} />}
+        {title}
+      </div>
+      <div className="flex flex-col gap-1">
+        {subjects.map((s) => (
+          <SubjectRow key={s.key} s={s} metricKey={metricKey} formatMetric={formatMetric} category={category} dateRange={dateRange} tone={tone} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SubjectRow({ s, metricKey, formatMetric, category, dateRange, tone }) {
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [articles, setArticles] = useState([]);
+
+  function toggle() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && articles.length === 0) {
+      setLoading(true);
+      fetchCategorySubjectArticles(category, s.key, dateRange)
+        .then(setArticles)
+        .catch(() => setArticles([]))
+        .finally(() => setLoading(false));
+    }
+  }
+
+  const metricColor = tone === "pos" ? POS : NEG;
+
+  return (
+    <div className="flex flex-col gap-1 border-b py-2 last:border-0" style={{ borderColor: "#E3DDCE" }}>
+      <button onClick={toggle} className="flex items-center justify-between gap-2 text-left">
+        <span className="flex items-center gap-1.5 text-sm" style={{ color: INK }}>
+          {expanded ? <ChevronUp size={12} style={{ color: SUBTEXT }} /> : <ChevronDown size={12} style={{ color: SUBTEXT }} />}
+          {s.key}
+        </span>
+        <span className="flex items-center gap-2 whitespace-nowrap text-xs">
+          <span style={{ color: SUBTEXT }}>{s.articleCount} articles</span>
+          <span className="font-mono font-medium" style={{ color: metricColor }}>{formatMetric(s[metricKey])}</span>
+        </span>
+      </button>
+      <ArticleListReveal expanded={expanded} loading={loading} articles={articles} />
+    </div>
+  );
+}
+
 function RevenueChart({ monthlyEmvByPublication, selectedPubs }) {
   const sortedMonths = combinedMonths(monthlyEmvByPublication, selectedPubs);
   const chartData = sortedMonths.map((m) => ({
@@ -1915,6 +2081,33 @@ function MethodologyView() {
         </div>
       </div>
 
+      <div>
+        <div className="mb-3 font-serif text-lg" style={{ color: INK }}>Best &amp; Worst: category definitions</div>
+        <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+          <p className="mb-4 text-sm" style={{ color: "#3A4150" }}>
+            The dataset's real editorial section field is missing on roughly 55% of articles and
+            inconsistent across publications, so it cannot support a clean category taxonomy on its
+            own. Instead, each category below is defined as a documented set of keyword terms,
+            matched against article title and body — the same mechanism a topic search already uses,
+            applied to a curated term set instead of one free-text query.
+          </p>
+          <div className="grid gap-3 text-xs sm:grid-cols-2">
+            {CATEGORY_IDS.map((id) => (
+              <div key={id}>
+                <span className="font-medium" style={{ color: INK }}>{CATEGORIES[id].label}:</span>{" "}
+                <span style={{ color: SUBTEXT }}>{CATEGORIES[id].terms.join(", ")}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-4 text-xs" style={{ color: SUBTEXT }}>
+            "Other" is the catch-all: articles matching none of the terms above. Ranked subjects
+            within a category come from significant_text mining scoped to that category's filter,
+            the same method behind Related Keywords, with subjects under 3 matching articles dropped
+            as too sparse to rank meaningfully.
+          </p>
+        </div>
+      </div>
+
       <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
         <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Data quality notes</div>
         <div className="flex flex-col gap-3 text-sm" style={{ color: "#3A4150" }}>
@@ -2264,6 +2457,7 @@ export default function OmeaDashboard() {
                 { id: "owner", label: "Marketing Owner" },
                 { id: "analyst", label: "Data Analyst" },
                 { id: "brands", label: "Brand Compare" },
+                { id: "bestworst", label: "Best & Worst" },
                 { id: "insights", label: "Content Insights" },
                 { id: "methodology", label: "How It Works" },
               ].map((p) => (
@@ -2296,6 +2490,18 @@ export default function OmeaDashboard() {
               onIntervalChange={setInterval}
             />
             <BrandComparisonView dateRange={dateRange} interval={interval} />
+          </>
+        ) : persona === "bestworst" ? (
+          <>
+            <TimeControls
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              onDateFromChange={setDateFrom}
+              onDateToChange={setDateTo}
+              interval={interval}
+              onIntervalChange={setInterval}
+            />
+            <BestWorstView dateRange={dateRange} />
           </>
         ) : (
           <>
