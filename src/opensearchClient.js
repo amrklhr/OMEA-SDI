@@ -566,3 +566,76 @@ export async function fetchTopicData(topic, dateRange = {}, interval = "month") 
   ]);
   return { label: topic, summary, monthlyByPublication, monthlyEmvByPublication, publications, spotlight };
 }
+
+/**
+ * Brand comparison — runs a batched msearch for multiple brands at once.
+ * For each brand: one summary query (volume, sentiment, impressions, emv)
+ * plus one time-series query (monthly volume + sentiment + publication breakdown).
+ * Returns an array of brand data objects ready for comparative charts.
+ */
+export async function fetchBrandComparison(brands, dateRange = {}, interval = "month") {
+  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
+  const ndjsonLines = [];
+
+  for (const brand of brands) {
+    // summary query
+    ndjsonLines.push(JSON.stringify({ index: INDEX }));
+    ndjsonLines.push(JSON.stringify({
+      size: 0,
+      query: topicFilter(brand, dateRange),
+      aggs: {
+        avg_sentiment: { avg: { field: "sentiment_score" } },
+        total_impressions: { sum: { field: "estimated_impressions" } },
+        total_emv: { sum: { field: "emv" } },
+        avg_engagement: { avg: { field: "engagement_rate" } },
+        avg_roi: { avg: { field: "roi_index" } },
+      },
+    }));
+    // monthly + publication breakdown query
+    ndjsonLines.push(JSON.stringify({ index: INDEX }));
+    ndjsonLines.push(JSON.stringify({
+      size: 0,
+      query: topicFilter(brand, dateRange),
+      aggs: {
+        monthly: {
+          date_histogram: { field: "date", calendar_interval: interval, format },
+          aggs: { avg_sentiment: { avg: { field: "sentiment_score" } } },
+        },
+        by_publication: { terms: { field: "publication", size: 30 } },
+      },
+    }));
+  }
+
+  const result = await runMsearch(ndjsonLines);
+  const brandData = [];
+
+  for (let i = 0; i < brands.length; i++) {
+    const summaryResp = result.responses[i * 2];
+    const detailResp = result.responses[i * 2 + 1];
+    const aggs = summaryResp.aggregations;
+
+    const monthly = {};
+    for (const b of detailResp.aggregations.monthly.buckets) {
+      monthly[b.key_as_string] = { count: b.doc_count, sentiment: b.avg_sentiment.value ?? 0 };
+    }
+
+    const publications = {};
+    for (const b of detailResp.aggregations.by_publication.buckets) {
+      publications[b.key] = b.doc_count;
+    }
+
+    brandData.push({
+      brand: brands[i],
+      volume: summaryResp.hits.total.value,
+      sentiment: aggs.avg_sentiment.value ?? 0,
+      impressions: aggs.total_impressions.value ?? 0,
+      emv: aggs.total_emv.value ?? 0,
+      engagement: aggs.avg_engagement.value ?? 0,
+      roi: aggs.avg_roi.value ?? 0,
+      monthly,
+      publications,
+    });
+  }
+
+  return brandData;
+}

@@ -4,13 +4,13 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, Legend, ScatterChart, Scatter, ZAxis, AreaChart, Area,
 } from "recharts";
 import {
-  Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, BookOpen, Check, List, MessageCircle,
+  Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, BookOpen, Check, List, MessageCircle, AlertTriangle, Plus, X, Lightbulb,
 } from "lucide-react";
 import {
   fetchTopicData, fetchKeywordProminence, fetchContextBreakdown,
   fetchSentimentDistribution, fetchArticleSample,
   fetchArticlesForKeyword, fetchArticlesForSection,
-  fetchMonthlyKpiBreakdown,
+  fetchMonthlyKpiBreakdown, fetchBrandComparison,
 } from "./opensearchClient";
 
 const INK = "#1B2430";
@@ -33,6 +33,7 @@ const PUB_COLORS = {
   "TMZ": "#4A4038",
 };
 const FALLBACK_PALETTE = ["#5B6472", "#9C8F6E", "#6E8C88", "#8C6E7B"];
+const BRAND_COLORS = ["#3B5B77", "#C89B3C", "#6B8F71", "#A45C6B", "#8C6239"];
 function colorFor(name, index) {
   return PUB_COLORS[name] || FALLBACK_PALETTE[index % FALLBACK_PALETTE.length];
 }
@@ -130,6 +131,141 @@ function KpiCard({ icon: Icon, label, value, tone }) {
         <span className="text-xs tracking-wide">{label}</span>
       </div>
       <div className="font-mono text-3xl" style={{ color }}>{value}</div>
+    </div>
+  );
+}
+
+// generates data-driven recommendations from the current topic data
+function generateInsights(topic, selectedPubs) {
+  const insights = [];
+  const pubs = topic.publications.filter((p) => selectedPubs.includes(p.name));
+  if (pubs.length === 0) return insights;
+
+  const volume = pubs.reduce((s, p) => s + p.articles, 0);
+  const wAvg = (key) => (volume === 0 ? 0 : pubs.reduce((s, p) => s + p[key] * p.articles, 0) / volume);
+  const sentiment = wAvg("sentiment");
+
+  // top channel by coverage
+  const topPub = [...pubs].sort((a, b) => b.articles - a.articles)[0];
+  const topPubPct = ((topPub.articles / volume) * 100).toFixed(0);
+  insights.push({
+    type: "action",
+    title: "Top coverage channel",
+    text: `${topPub.name} accounts for ${topPubPct}% of all coverage (${topPub.articles} articles).`,
+    recommendation: `Prioritize media outreach with ${topPub.name} for maximum visibility on this topic.`,
+  });
+
+  // most favorable outlet
+  if (pubs.length > 1) {
+    const bestSentPub = [...pubs].sort((a, b) => b.sentiment - a.sentiment)[0];
+    if (bestSentPub.sentiment > 0.1) {
+      insights.push({
+        type: "positive",
+        title: "Most favorable outlet",
+        text: `${bestSentPub.name} has the highest sentiment (+${bestSentPub.sentiment.toFixed(2)}).`,
+        recommendation: `Consider ${bestSentPub.name} for thought leadership pieces and positive brand placement.`,
+      });
+    }
+  }
+
+  // negative coverage risk
+  if (pubs.length > 1) {
+    const worstSentPub = [...pubs].sort((a, b) => a.sentiment - b.sentiment)[0];
+    if (worstSentPub.sentiment < -0.1) {
+      insights.push({
+        type: "warning",
+        title: "Negative coverage risk",
+        text: `${worstSentPub.name} shows negative sentiment (${worstSentPub.sentiment.toFixed(2)}).`,
+        recommendation: `Review recent ${worstSentPub.name} coverage and prepare response messaging if needed.`,
+      });
+    }
+  }
+
+  // overall narrative direction
+  if (sentiment > 0.3) {
+    insights.push({
+      type: "positive",
+      title: "Favorable media narrative",
+      text: `Overall sentiment is +${sentiment.toFixed(2)} across ${volume} articles.`,
+      recommendation: `Amplify positive coverage through owned channels and social media.`,
+    });
+  } else if (sentiment < 0) {
+    insights.push({
+      type: "warning",
+      title: "Unfavorable media narrative",
+      text: `Overall sentiment is ${sentiment.toFixed(2)} across ${volume} articles.`,
+      recommendation: `Identify negative themes in Content Insights and develop counter-messaging.`,
+    });
+  }
+
+  // highest engagement channel
+  if (pubs.length > 1) {
+    const bestEngPub = [...pubs].sort((a, b) => b.engagement - a.engagement)[0];
+    insights.push({
+      type: "action",
+      title: "Highest audience engagement",
+      text: `${bestEngPub.name} generates the highest engagement rate (${fmtPct(bestEngPub.engagement)}).`,
+      recommendation: `Content through ${bestEngPub.name} is most likely to drive audience interaction.`,
+    });
+  }
+
+  // coverage momentum (last vs previous period)
+  const sortedMonths = combinedMonths(topic.monthlyByPublication, selectedPubs);
+  if (sortedMonths.length >= 3) {
+    const last = sortedMonths[sortedMonths.length - 1];
+    const prev = sortedMonths[sortedMonths.length - 2];
+    const lastVol = selectedPubs.reduce((s, p) => s + (topic.monthlyByPublication[p]?.[last] || 0), 0);
+    const prevVol = selectedPubs.reduce((s, p) => s + (topic.monthlyByPublication[p]?.[prev] || 0), 0);
+    if (prevVol > 0) {
+      const change = ((lastVol - prevVol) / prevVol) * 100;
+      if (change > 20) {
+        insights.push({
+          type: "positive",
+          title: "Rising coverage momentum",
+          text: `Coverage increased ${change.toFixed(0)}% from ${prev} to ${last}.`,
+          recommendation: `Capitalize on rising interest by issuing new content while the topic is trending.`,
+        });
+      } else if (change < -30) {
+        insights.push({
+          type: "warning",
+          title: "Declining coverage",
+          text: `Coverage dropped ${Math.abs(change).toFixed(0)}% from ${prev} to ${last}.`,
+          recommendation: `Consider a newsworthy angle or event to re-ignite media interest.`,
+        });
+      }
+    }
+  }
+
+  return insights;
+}
+
+function InsightsPanel({ insights }) {
+  if (!insights || insights.length === 0) return null;
+  const iconFor = (type) => {
+    if (type === "positive") return <TrendingUp size={14} style={{ color: POS }} />;
+    if (type === "warning") return <AlertTriangle size={14} style={{ color: NEG }} />;
+    return <Lightbulb size={14} style={{ color: GOLD }} />;
+  };
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: GOLD, background: "#FBF7EE" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Actionable insights</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        Data-driven recommendations for this topic and the selected channels.
+      </div>
+      <div className="flex flex-col gap-4">
+        {insights.map((ins, i) => (
+          <div key={i} className="flex gap-3">
+            <div className="mt-0.5 shrink-0">{iconFor(ins.type)}</div>
+            <div>
+              <div className="text-sm font-medium" style={{ color: INK }}>{ins.title}</div>
+              <div className="text-xs" style={{ color: "#3A4150" }}>{ins.text}</div>
+              <div className="mt-1 text-xs font-medium" style={{ color: ins.type === "warning" ? NEG : POS }}>
+                {ins.recommendation}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -624,6 +760,230 @@ function ContentInsightsView({ keywords, keywordsLoading, phraseLength, onPhrase
   );
 }
 
+function BrandComparisonView({ dateRange, interval }) {
+  const [brandInputs, setBrandInputs] = useState(["Facebook", "Google"]);
+  const [brandData, setBrandData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [hasCompared, setHasCompared] = useState(false);
+
+  function updateBrand(idx, value) {
+    const next = [...brandInputs];
+    next[idx] = value;
+    setBrandInputs(next);
+  }
+  function addBrand() {
+    if (brandInputs.length < 5) setBrandInputs([...brandInputs, ""]);
+  }
+  function removeBrand(idx) {
+    if (brandInputs.length > 2) setBrandInputs(brandInputs.filter((_, i) => i !== idx));
+  }
+
+  async function handleCompare(e) {
+    e.preventDefault();
+    const brands = brandInputs.map((b) => b.trim()).filter(Boolean);
+    if (brands.length < 2) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchBrandComparison(brands, dateRange, interval);
+      setBrandData(data);
+      setHasCompared(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // build coverage trend data for multi-line chart
+  const allPeriods = new Set();
+  brandData.forEach((b) => Object.keys(b.monthly).forEach((m) => allPeriods.add(m)));
+  const sortedPeriods = [...allPeriods].sort();
+  const trendData = sortedPeriods.map((m) => {
+    const row = { period: m };
+    brandData.forEach((b) => { row[b.brand] = b.monthly[m]?.count || 0; });
+    return row;
+  });
+
+  // sentiment over time for multi-line
+  const sentimentTrendData = sortedPeriods.map((m) => {
+    const row = { period: m };
+    brandData.forEach((b) => { row[b.brand] = b.monthly[m]?.sentiment ?? null; });
+    return row;
+  });
+
+  const totalVolume = brandData.reduce((s, b) => s + b.volume, 0);
+
+  return (
+    <div className="flex flex-col gap-8">
+      {/* brand input form */}
+      <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+        <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Compare brands</div>
+        <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+          Enter 2 to 5 brand names, topics, or entities to compare their media coverage side by side.
+        </div>
+        <form onSubmit={handleCompare} className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2">
+            {brandInputs.map((val, idx) => (
+              <div key={idx} className="flex items-center gap-1">
+                <div className="h-3 w-3 rounded-full" style={{ background: BRAND_COLORS[idx] }} />
+                <input
+                  value={val}
+                  onChange={(e) => updateBrand(idx, e.target.value)}
+                  placeholder={`Brand ${idx + 1}`}
+                  className="w-36 rounded-sm border px-2 py-1.5 text-sm outline-none"
+                  style={{ borderColor: "#D9D2C2", background: "#FBFAF6", color: INK }}
+                />
+                {brandInputs.length > 2 && (
+                  <button type="button" onClick={() => removeBrand(idx)} className="text-xs" style={{ color: SUBTEXT }}><X size={14} /></button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-3">
+            {brandInputs.length < 5 && (
+              <button type="button" onClick={addBrand} className="flex items-center gap-1 text-xs font-medium" style={{ color: SUBTEXT }}>
+                <Plus size={13} /> Add brand
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={loading || brandInputs.filter((b) => b.trim()).length < 2}
+              className="rounded-sm px-4 py-2 text-sm font-medium disabled:opacity-50"
+              style={{ background: INK, color: PAPER }}
+            >
+              {loading ? <Loader2 size={14} className="animate-spin" /> : "Compare"}
+            </button>
+          </div>
+        </form>
+        {error && <div className="mt-3 text-xs" style={{ color: NEG }}>{error}</div>}
+      </div>
+
+      {hasCompared && brandData.length > 0 && (
+        <>
+          {/* coverage trend overlay */}
+          <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+            <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Coverage volume over time</div>
+            <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+              Article count per period for each brand. Shows when coverage rises, falls, or spikes relative to competitors.
+            </div>
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={trendData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid stroke="#E3DDCE" vertical={false} />
+                <XAxis dataKey="period" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(trendData.length / 8)} />
+                <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} />
+                <Tooltip contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {brandData.map((b, i) => (
+                  <Line key={b.brand} type="monotone" dataKey={b.brand} stroke={BRAND_COLORS[i]} strokeWidth={2} dot={false} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* share of voice bar */}
+          <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+            <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Share of voice</div>
+            <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+              Relative coverage volume across the compared brands. Who dominates the media conversation.
+            </div>
+            <ResponsiveContainer width="100%" height={Math.max(120, brandData.length * 50)}>
+              <BarChart data={brandData.map((b) => ({ name: b.brand, volume: b.volume }))} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 0 }}>
+                <CartesianGrid stroke="#E3DDCE" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 10, fill: SUBTEXT }} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: INK }} width={120} />
+                <Tooltip formatter={(v) => [fmtNum(v), "Articles"]} contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} />
+                <Bar dataKey="volume">
+                  {brandData.map((b, i) => <Cell key={b.brand} fill={BRAND_COLORS[i]} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            <StatsRow items={brandData.map((b) => ({
+              label: b.brand,
+              value: `${fmtNum(b.volume)} (${totalVolume > 0 ? ((b.volume / totalVolume) * 100).toFixed(1) : 0}%)`,
+            }))} />
+          </div>
+
+          {/* sentiment comparison */}
+          <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+            <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Sentiment comparison</div>
+            <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+              Average sentiment per brand. Positive values indicate favorable coverage, negative values indicate critical coverage.
+            </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={brandData.map((b) => ({ name: b.brand, sentiment: b.sentiment }))} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                <CartesianGrid stroke="#E3DDCE" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: INK }} />
+                <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} domain={[-1, 1]} />
+                <Tooltip formatter={(v) => [(v >= 0 ? "+" : "") + v.toFixed(3), "Sentiment"]} contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} />
+                <Bar dataKey="sentiment">
+                  {brandData.map((b, i) => <Cell key={b.brand} fill={b.sentiment >= 0 ? POS : NEG} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* sentiment trend over time */}
+          <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+            <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Sentiment trend over time</div>
+            <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+              How each brand's media sentiment evolves period by period.
+            </div>
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={sentimentTrendData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                <CartesianGrid stroke="#E3DDCE" vertical={false} />
+                <XAxis dataKey="period" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(sentimentTrendData.length / 8)} />
+                <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} domain={[-1, 1]} />
+                <Tooltip formatter={(v) => [v !== null ? (v >= 0 ? "+" : "") + v.toFixed(3) : "n/a", "Sentiment"]} contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {brandData.map((b, i) => (
+                  <Line key={b.brand} type="monotone" dataKey={b.brand} stroke={BRAND_COLORS[i]} strokeWidth={2} dot={false} connectNulls />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* summary table */}
+          <div className="overflow-x-auto rounded-sm border" style={{ borderColor: "#D9D2C2" }}>
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr style={{ background: INK }}>
+                  {["Brand", "Articles", "Sentiment", "Impressions", "EMV", "Engagement", "ROI Index"].map((h) => (
+                    <th key={h} className="whitespace-nowrap px-4 py-3 text-xs font-medium" style={{ color: PAPER, textAlign: h === "Brand" ? "left" : "right" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {brandData.map((b, i) => (
+                  <tr key={b.brand} className="border-b" style={{ borderColor: "#E3DDCE", background: "#FBFAF6" }}>
+                    <td className="px-4 py-3 text-sm font-medium" style={{ color: INK }}>
+                      <span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ background: BRAND_COLORS[i] }} />
+                      {b.brand}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-sm text-right" style={{ color: INK }}>{fmtNum(b.volume)}</td>
+                    <td className="px-4 py-3 font-mono text-sm text-right" style={{ color: b.sentiment >= 0 ? POS : NEG }}>{(b.sentiment >= 0 ? "+" : "") + b.sentiment.toFixed(3)}</td>
+                    <td className="px-4 py-3 font-mono text-sm text-right" style={{ color: INK }}>{fmtNum(b.impressions)}</td>
+                    <td className="px-4 py-3 font-mono text-sm text-right" style={{ color: INK }}>{fmtMoney(b.emv)}</td>
+                    <td className="px-4 py-3 font-mono text-sm text-right" style={{ color: INK }}>{fmtPct(b.engagement)}</td>
+                    <td className="px-4 py-3 font-mono text-sm text-right" style={{ color: b.roi >= 0 ? POS : NEG }}>{fmtPct(b.roi)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {hasCompared && brandData.length === 0 && !loading && (
+        <div className="rounded-sm border px-4 py-6 text-sm" style={{ borderColor: "#D9D2C2", background: "#FBFAF6", color: SUBTEXT }}>
+          No data found for the selected brands. Try different names or widen the date range.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RevenueChart({ monthlyEmvByPublication, selectedPubs }) {
   const sortedMonths = combinedMonths(monthlyEmvByPublication, selectedPubs);
   const chartData = sortedMonths.map((m) => ({
@@ -690,15 +1050,22 @@ function MarketingOwnerView({ topic, selectedPubs }) {
           <Download size={13} /> Export summary CSV
         </button>
       </div>
+      <div className="mb-1 text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Effectiveness</div>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <KpiCard icon={Newspaper} label="Coverage Volume" value={fmtNum(volume)} />
         <KpiCard icon={Smile} label="Avg. Sentiment" value={(sentiment >= 0 ? "+" : "") + sentiment.toFixed(2)} tone={sentiment >= 0 ? "pos" : "neg"} />
         <KpiCard icon={Eye} label="Est. Impressions" value={`${(impressions / 1_000_000).toFixed(1)}M`} />
         <KpiCard icon={TrendingUp} label="Engagement Rate" value={fmtPct(engagement)} />
+      </div>
+
+      <div className="mt-4 mb-1 text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Efficiency</div>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
         <KpiCard icon={MousePointerClick} label="Avg. CTR" value={fmtPct(topic.summary.ctr)} />
         <KpiCard icon={DollarSign} label="Earned Media Value" value={`$${(emv / 1000).toFixed(1)}K`} tone="pos" />
         <KpiCard icon={Target} label="ROI Index" value={fmtPct(roi)} tone={roi >= 0 ? "pos" : "neg"} />
       </div>
+
+      <InsightsPanel insights={generateInsights(topic, selectedPubs)} />
 
       <SpotlightCard spotlight={topic.spotlight} />
 
@@ -1341,6 +1708,33 @@ function MethodologyView() {
       </div>
 
       <div>
+        <div className="mb-3 font-serif text-lg" style={{ color: INK }}>Effectiveness vs. efficiency</div>
+        <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+          <p className="mb-3 text-sm" style={{ color: "#3A4150" }}>
+            This dashboard distinguishes between two types of media performance metrics:
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <div className="mb-1 text-sm font-medium" style={{ color: INK }}>Effectiveness (did we achieve the goal?)</div>
+              <p className="text-xs" style={{ color: "#3A4150" }}>
+                Coverage Volume (reach), Share of Voice (awareness), Sentiment Score (perception
+                quality), Keyword Prominence (message penetration), and Engagement Rate (audience
+                response). These answer: <em>what was achieved</em> by the media presence.
+              </p>
+            </div>
+            <div>
+              <div className="mb-1 text-sm font-medium" style={{ color: INK }}>Efficiency (at what cost per outcome?)</div>
+              <p className="text-xs" style={{ color: "#3A4150" }}>
+                Cost per Engagement (CPE), ROI Index, and Earned Media Value (EMV). These compare
+                outcomes against resource costs and answer: <em>how efficiently</em> media value was
+                generated relative to paid alternatives.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
         <div className="mb-3 font-serif text-lg" style={{ color: INK }}>Sentiment scoring</div>
         <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
           <p className="mb-3 text-sm" style={{ color: "#3A4150" }}>
@@ -1750,6 +2144,7 @@ export default function OmeaDashboard() {
               {[
                 { id: "owner", label: "Marketing Owner" },
                 { id: "analyst", label: "Data Analyst" },
+                { id: "brands", label: "Brand Compare" },
                 { id: "insights", label: "Content Insights" },
                 { id: "methodology", label: "How It Works" },
               ].map((p) => (
@@ -1772,6 +2167,18 @@ export default function OmeaDashboard() {
 
         {persona === "methodology" ? (
           <MethodologyView />
+        ) : persona === "brands" ? (
+          <>
+            <TimeControls
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              onDateFromChange={setDateFrom}
+              onDateToChange={setDateTo}
+              interval={interval}
+              onIntervalChange={setInterval}
+            />
+            <BrandComparisonView dateRange={dateRange} interval={interval} />
+          </>
         ) : (
           <>
             <TimeControls
