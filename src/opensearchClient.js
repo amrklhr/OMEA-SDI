@@ -725,10 +725,18 @@ function categoryFilter(categoryId, dateRange = {}) {
 export async function fetchCategoryLeaderboard(categoryId, dateRange = {}, phraseLength = 2) {
   const catFilter = categoryFilter(categoryId, dateRange);
   const field = PHRASE_FIELD[phraseLength] || "article";
-  const fetchSize = phraseLength > 1 ? 40 : 25;
+  // multi-word shingle fields (bigram/trigram/quadgram) have far higher term
+  // cardinality than single words, so significant_text on them is much more
+  // expensive to compute — keep fetchSize modest and bound the query with
+  // timeout + terminate_after so a slow shard returns partial results
+  // instead of hanging past Vercel's function timeout (which shows up as a
+  // 502, not a normal error)
+  const fetchSize = phraseLength > 1 ? 20 : 25;
 
   const candidatesData = await runQuery({
     size: 0,
+    timeout: "8s",
+    terminate_after: 15000,
     query: catFilter,
     aggs: { subjects: { significant_text: { field, size: fetchSize } } },
   });
@@ -736,7 +744,7 @@ export async function fetchCategoryLeaderboard(categoryId, dateRange = {}, phras
   const candidates = buckets
     .map((b) => b.key)
     .filter((k) => !containsStopword(k))
-    .slice(0, 15);
+    .slice(0, phraseLength > 1 ? 10 : 15);
 
   if (candidates.length === 0) {
     return { category: categoryId, dateRange, phraseLength, subjects: [] };
@@ -747,6 +755,7 @@ export async function fetchCategoryLeaderboard(categoryId, dateRange = {}, phras
     ndjsonLines.push(JSON.stringify({ index: INDEX }));
     ndjsonLines.push(JSON.stringify({
       size: 0,
+      timeout: "5s",
       query: { bool: { must: [catFilter, { match_phrase: { article: c } }] } },
       aggs: {
         avg_sentiment: { avg: { field: "sentiment_score" } },
