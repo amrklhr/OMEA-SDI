@@ -4,13 +4,13 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, Legend, ScatterChart, Scatter, ZAxis, AreaChart, Area,
 } from "recharts";
 import {
-  Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, BookOpen, Check, List, MessageCircle, AlertTriangle, Plus, X, Lightbulb,
+  Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, Check, List, MessageCircle, AlertTriangle, Plus, X, Lightbulb, ArrowUp, ArrowDown,
 } from "lucide-react";
 import {
   fetchTopicData, fetchKeywordProminence, fetchContextBreakdown,
   fetchSentimentDistribution, fetchArticleSample,
   fetchArticlesForKeyword, fetchArticlesForSection,
-  fetchMonthlyKpiBreakdown, fetchBrandComparison,
+  fetchMonthlyKpiBreakdown, fetchBrandComparison, fetchPriorPeriodSummary,
 } from "./opensearchClient";
 
 const INK = "#1B2430";
@@ -122,13 +122,23 @@ function StatsRow({ items }) {
   );
 }
 
-function KpiCard({ icon: Icon, label, value, tone }) {
+function KpiCard({ icon: Icon, label, value, tone, delta }) {
   const color = tone === "pos" ? POS : tone === "neg" ? NEG : INK;
+  // delta is a percent change vs prior period — positive means up, negative means down
+  const deltaColor = delta > 0 ? POS : delta < 0 ? NEG : SUBTEXT;
   return (
     <div className="flex flex-col gap-3 rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
-      <div className="flex items-center gap-2" style={{ color: SUBTEXT }}>
-        <Icon size={16} strokeWidth={1.75} />
-        <span className="text-xs tracking-wide">{label}</span>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2" style={{ color: SUBTEXT }}>
+          <Icon size={16} strokeWidth={1.75} />
+          <span className="text-xs tracking-wide">{label}</span>
+        </div>
+        {delta !== undefined && delta !== null && (
+          <div className="flex items-center gap-0.5 text-xs font-medium" style={{ color: deltaColor }}>
+            {delta > 0 ? <ArrowUp size={11} /> : delta < 0 ? <ArrowDown size={11} /> : null}
+            {Math.abs(delta).toFixed(1)}%
+          </div>
+        )}
       </div>
       <div className="font-mono text-3xl" style={{ color }}>{value}</div>
     </div>
@@ -980,6 +990,76 @@ function BrandComparisonView({ dateRange, interval }) {
           No data found for the selected brands. Try different names or widen the date range.
         </div>
       )}
+
+      {hasCompared && brandData.length > 1 && (
+        <BrandInsightsPanel brandData={brandData} totalVolume={totalVolume} />
+      )}
+    </div>
+  );
+}
+
+function BrandInsightsPanel({ brandData, totalVolume }) {
+  const sorted = [...brandData].sort((a, b) => b.volume - a.volume);
+  const leader = sorted[0];
+  const bestSentiment = [...brandData].sort((a, b) => b.sentiment - a.sentiment)[0];
+  const worstSentiment = [...brandData].sort((a, b) => a.sentiment - b.sentiment)[0];
+  const bestRoi = [...brandData].sort((a, b) => b.roi - a.roi)[0];
+
+  const insights = [
+    {
+      type: "action",
+      title: "Share of voice leader",
+      text: `${leader.brand} dominates with ${fmtNum(leader.volume)} articles — ${totalVolume > 0 ? ((leader.volume / totalVolume) * 100).toFixed(0) : 0}% of total coverage across all compared brands.`,
+      recommendation: `Monitor ${leader.brand} closely as the benchmark. Closing the gap requires consistent outreach and newsworthy angles.`,
+    },
+    {
+      type: bestSentiment.sentiment > 0 ? "positive" : "warning",
+      title: "Most favorable coverage",
+      text: `${bestSentiment.brand} has the highest average sentiment (${(bestSentiment.sentiment >= 0 ? "+" : "") + bestSentiment.sentiment.toFixed(2)}).`,
+      recommendation: `Study ${bestSentiment.brand}'s messaging and media relationships — they are generating more favorable coverage than competitors.`,
+    },
+  ];
+
+  if (worstSentiment.sentiment < -0.05 && worstSentiment.brand !== bestSentiment.brand) {
+    insights.push({
+      type: "warning",
+      title: "Reputation risk",
+      text: `${worstSentiment.brand} has the lowest sentiment (${(worstSentiment.sentiment >= 0 ? "+" : "") + worstSentiment.sentiment.toFixed(2)}).`,
+      recommendation: `If this is your brand, prioritize positive story placement and proactive media engagement to shift the narrative.`,
+    });
+  }
+
+  insights.push({
+    type: "action",
+    title: "Most efficient media presence",
+    text: `${bestRoi.brand} achieves the best ROI Index (${fmtPct(bestRoi.roi)}), meaning their coverage generates the most earned value per impression.`,
+    recommendation: `Analyze the content type and publication mix that ${bestRoi.brand} uses to replicate their efficiency.`,
+  });
+
+  const iconFor = (type) => {
+    if (type === "positive") return <TrendingUp size={14} style={{ color: POS }} />;
+    if (type === "warning") return <AlertTriangle size={14} style={{ color: NEG }} />;
+    return <Lightbulb size={14} style={{ color: GOLD }} />;
+  };
+
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: GOLD, background: "#FBF7EE" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Competitive insights</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        Data-driven observations from the brand comparison.
+      </div>
+      <div className="flex flex-col gap-4">
+        {insights.map((ins, i) => (
+          <div key={i} className="flex gap-3">
+            <div className="mt-0.5 shrink-0">{iconFor(ins.type)}</div>
+            <div>
+              <div className="text-sm font-medium" style={{ color: INK }}>{ins.title}</div>
+              <div className="text-xs" style={{ color: "#3A4150" }}>{ins.text}</div>
+              <div className="mt-1 text-xs font-medium" style={{ color: ins.type === "warning" ? NEG : POS }}>{ins.recommendation}</div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1021,7 +1101,7 @@ function RevenueChart({ monthlyEmvByPublication, selectedPubs }) {
   );
 }
 
-function MarketingOwnerView({ topic, selectedPubs }) {
+function MarketingOwnerView({ topic, selectedPubs, priorSummary }) {
   const pubs = topic.publications.filter((p) => selectedPubs.includes(p.name));
   const volume = pubs.reduce((sum, p) => sum + p.articles, 0);
   const impressions = pubs.reduce((sum, p) => sum + p.impressions, 0);
@@ -1032,6 +1112,17 @@ function MarketingOwnerView({ topic, selectedPubs }) {
   const roi = wAvg("roi");
   const isFiltered = selectedPubs.length < topic.publications.length;
 
+  // compute % change vs prior period for each KPI
+  const pct = (curr, prev) => (prev && prev !== 0 ? ((curr - prev) / Math.abs(prev)) * 100 : null);
+  const d = priorSummary ? {
+    volume:     pct(volume,     priorSummary.volume),
+    sentiment:  pct(sentiment,  priorSummary.sentiment),
+    impressions:pct(impressions,priorSummary.impressions),
+    engagement: pct(engagement, priorSummary.engagement),
+    emv:        pct(emv,        priorSummary.emv),
+    roi:        pct(roi,        priorSummary.roi),
+  } : {};
+
   const sortedMonths = combinedMonths(topic.monthlyByPublication, selectedPubs);
   const chartData = sortedMonths.map((m) => ({
     m,
@@ -1041,7 +1132,8 @@ function MarketingOwnerView({ topic, selectedPubs }) {
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Effectiveness</div>
         <button
           onClick={() => exportKpiSummaryCSV(topic, selectedPubs)}
           className="flex items-center gap-1.5 rounded-sm border px-3 py-1.5 text-xs font-medium"
@@ -1050,19 +1142,18 @@ function MarketingOwnerView({ topic, selectedPubs }) {
           <Download size={13} /> Export summary CSV
         </button>
       </div>
-      <div className="mb-1 text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Effectiveness</div>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <KpiCard icon={Newspaper} label="Coverage Volume" value={fmtNum(volume)} />
-        <KpiCard icon={Smile} label="Avg. Sentiment" value={(sentiment >= 0 ? "+" : "") + sentiment.toFixed(2)} tone={sentiment >= 0 ? "pos" : "neg"} />
-        <KpiCard icon={Eye} label="Est. Impressions" value={`${(impressions / 1_000_000).toFixed(1)}M`} />
-        <KpiCard icon={TrendingUp} label="Engagement Rate" value={fmtPct(engagement)} />
+        <KpiCard icon={Newspaper} label="Coverage Volume" value={fmtNum(volume)} delta={d.volume} />
+        <KpiCard icon={Smile} label="Avg. Sentiment" value={(sentiment >= 0 ? "+" : "") + sentiment.toFixed(2)} tone={sentiment >= 0 ? "pos" : "neg"} delta={d.sentiment} />
+        <KpiCard icon={Eye} label="Est. Impressions" value={`${(impressions / 1_000_000).toFixed(1)}M`} delta={d.impressions} />
+        <KpiCard icon={TrendingUp} label="Engagement Rate" value={fmtPct(engagement)} delta={d.engagement} />
       </div>
 
       <div className="mt-4 mb-1 text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Efficiency</div>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
         <KpiCard icon={MousePointerClick} label="Avg. CTR" value={fmtPct(topic.summary.ctr)} />
-        <KpiCard icon={DollarSign} label="Earned Media Value" value={`$${(emv / 1000).toFixed(1)}K`} tone="pos" />
-        <KpiCard icon={Target} label="ROI Index" value={fmtPct(roi)} tone={roi >= 0 ? "pos" : "neg"} />
+        <KpiCard icon={DollarSign} label="Earned Media Value" value={`$${(emv / 1000).toFixed(1)}K`} tone="pos" delta={d.emv} />
+        <KpiCard icon={Target} label="ROI Index" value={fmtPct(roi)} tone={roi >= 0 ? "pos" : "neg"} delta={d.roi} />
       </div>
 
       <InsightsPanel insights={generateInsights(topic, selectedPubs)} />
@@ -1081,6 +1172,9 @@ function MarketingOwnerView({ topic, selectedPubs }) {
             : "Live data from your OpenSearch index."}
           {spikes.size > 0 && (
             <span> Gold points mark statistically detected spikes (volume &gt; mean + 1.5&times;std dev): {[...spikes].join(", ")}.</span>
+          )}
+          {(dateTo === "" || dateTo >= "2019-06") && (
+            <span style={{ color: NEG }}> Note: the June 2019 spike is a corpus-wide collection artifact, not a real coverage event.</span>
           )}
         </div>
         <ResponsiveContainer width="100%" height={220}>
@@ -1638,13 +1732,14 @@ function PublicationFilter({ allPubs, selected, onChange }) {
           <button
             key={p.name}
             onClick={() => toggle(p.name)}
-            className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+            className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors"
             style={{
               borderColor: active ? INK : "#D9D2C2",
               background: active ? INK : "transparent",
               color: active ? PAPER : SUBTEXT,
             }}
           >
+            <span className="inline-block h-2 w-2 rounded-full" style={{ background: colorFor(p.name, 0), opacity: active ? 1 : 0.5 }} />
             {p.name}
           </button>
         );
@@ -1995,6 +2090,16 @@ export default function OmeaDashboard() {
 
   const { topic, loading, error } = useTopic(currentTopicName, dateRange, interval);
 
+  const [priorSummary, setPriorSummary] = useState(null);
+  useEffect(() => {
+    if (!topic?.label || selectedPubs.length === 0) return;
+    let cancelled = false;
+    fetchPriorPeriodSummary(topic.label, dateRange, selectedPubs)
+      .then((data) => { if (!cancelled) setPriorSummary(data); })
+      .catch(() => { if (!cancelled) setPriorSummary(null); });
+    return () => { cancelled = true; };
+  }, [topic?.label, dateFrom, dateTo, selectedPubs]);
+
   useEffect(() => {
     if (!topic) return;
     if (initialPubsRef.current) {
@@ -2140,6 +2245,20 @@ export default function OmeaDashboard() {
               </button>
             </div>
 
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs" style={{ color: SUBTEXT }}>Try:</span>
+              {["Facebook", "Google", "Amazon", "Apple", "Twitter"].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => { setQuery(s); setCurrentTopicName(s); }}
+                  className="rounded-full border px-2.5 py-0.5 text-xs transition-colors hover:opacity-80"
+                  style={{ borderColor: "#D9D2C2", color: SUBTEXT, background: "transparent" }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+
             <div className="flex rounded-sm border" style={{ borderColor: INK }}>
               {[
                 { id: "owner", label: "Marketing Owner" },
@@ -2157,7 +2276,6 @@ export default function OmeaDashboard() {
                     color: persona === p.id ? PAPER : INK,
                   }}
                 >
-                  {p.id === "methodology" && <BookOpen size={14} />}
                   {p.label}
                 </button>
               ))}
@@ -2206,7 +2324,10 @@ export default function OmeaDashboard() {
               <>
                 <div className="mb-3 -mt-2 flex items-center gap-2">
                   <span className="text-xs" style={{ color: SUBTEXT }}>Currently viewing:</span>
-                  <span className="rounded-sm px-2.5 py-1 font-mono text-sm font-medium" style={{ background: INK, color: PAPER }}>{topic.label}</span>
+                  <span className="flex items-center gap-1.5 rounded-sm px-2.5 py-1 font-mono text-sm font-medium" style={{ background: INK, color: PAPER }}>
+                    {topic.label}
+                    <button onClick={() => { setQuery(""); setCurrentTopicName(""); }} style={{ color: PAPER, opacity: 0.6 }} title="Clear topic"><X size={12} /></button>
+                  </span>
                   {loading && <span className="text-xs" style={{ color: SUBTEXT }}><Loader2 size={10} className="inline animate-spin" /> refreshing…</span>}
                 </div>
 
@@ -2219,7 +2340,7 @@ export default function OmeaDashboard() {
                   <>
                     <PublicationFilter allPubs={topic.publications} selected={selectedPubs} onChange={setSelectedPubs} />
                     {persona === "owner" ? (
-                      <MarketingOwnerView topic={topic} selectedPubs={selectedPubs} />
+                      <MarketingOwnerView topic={topic} selectedPubs={selectedPubs} priorSummary={priorSummary} />
                     ) : persona === "analyst" ? (
                       <DataAnalystView
                         topic={topic}

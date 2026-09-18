@@ -103,6 +103,57 @@ export async function fetchSummary(topic, dateRange = {}) {
 }
 
 /**
+ * Computes a prior-period date range of the same length as the current one,
+ * so KPI cards can show delta vs. the period immediately before.
+ * e.g. if dateRange is 2018-01-01 to 2018-12-31 (365 days),
+ * prior range is 2017-01-01 to 2017-12-31.
+ * Falls back to a fixed 6-month window when no explicit range is given.
+ */
+export function computePriorDateRange(dateRange = {}) {
+  const DATASET_START = "2016-01-01";
+  const from = dateRange.from || DATASET_START;
+  const to = dateRange.to || "2019-07-13";
+  const msFrom = new Date(from).getTime();
+  const msTo = new Date(to).getTime();
+  const duration = msTo - msFrom;
+  const priorTo = new Date(msFrom - 1).toISOString().slice(0, 10);
+  const priorFrom = new Date(msFrom - duration - 1).toISOString().slice(0, 10);
+  // clamp so we never go before the dataset
+  if (new Date(priorFrom) < new Date(DATASET_START)) return null;
+  return { from: priorFrom, to: priorTo };
+}
+
+/**
+ * Runs fetchSummary for the prior period so KPI cards can compute delta.
+ * Returns null when no prior period exists within the dataset.
+ */
+export async function fetchPriorPeriodSummary(topic, dateRange = {}, publications = null) {
+  const prior = computePriorDateRange(dateRange);
+  if (!prior) return null;
+  const body = {
+    size: 0,
+    query: topicFilter(topic, prior, publications),
+    aggs: {
+      avg_sentiment: { avg: { field: "sentiment_score" } },
+      total_impressions: { sum: { field: "estimated_impressions" } },
+      avg_engagement_rate: { avg: { field: "engagement_rate" } },
+      total_emv: { sum: { field: "emv" } },
+      avg_roi_index: { avg: { field: "roi_index" } },
+    },
+  };
+  const data = await runQuery(body);
+  const a = data.aggregations;
+  return {
+    volume: data.hits.total.value,
+    sentiment: a.avg_sentiment.value ?? 0,
+    impressions: a.total_impressions.value ?? 0,
+    engagement: a.avg_engagement_rate.value ?? 0,
+    emv: a.total_emv.value ?? 0,
+    roi: a.avg_roi_index.value ?? 0,
+  };
+}
+
+/**
  * Monthly/quarterly/yearly coverage volume, broken down per publication —
  * lets the trend chart respond to the channel filter without an extra query
  * per click. Returns { [publicationName]: { [periodKey]: count } }.
@@ -305,16 +356,27 @@ export async function fetchPerformanceSpotlight(topic, dateRange = {}) {
     "title", "publication", "date", "section", "sentiment_score",
     "reach_tier", "estimated_impressions", "engagement_rate", "ctr", "cpe", "emv", "roi_index",
   ];
+  // exclude articles with perfectly extreme sentiment (±1.0) — they produce
+  // trivial ±100% ROI that is a formula artifact, not a real signal
+  const nonExtreme = {
+    bool: {
+      must: [topicFilter(topic, dateRange)],
+      must_not: [
+        { term: { sentiment_score: 1.0 } },
+        { term: { sentiment_score: -1.0 } },
+      ],
+    },
+  };
   const [topRes, bottomRes] = await Promise.all([
     runQuery({
       size: 1,
-      query: topicFilter(topic, dateRange),
+      query: nonExtreme,
       sort: [{ roi_index: { order: "desc" } }],
       _source: fields,
     }),
     runQuery({
       size: 1,
-      query: topicFilter(topic, dateRange),
+      query: nonExtreme,
       sort: [{ roi_index: { order: "asc" } }],
       _source: fields,
     }),
