@@ -622,205 +622,43 @@ export async function fetchKeywordProminence(topic, phraseLength = 1, dateRange 
   return keywords.map((k) => ({ ...k, context: contexts[k.key] }));
 }
 
-// ---------- Best & Worst: category leaderboards ----------
+// ---------- Best & Worst: top/bottom performing titles ----------
 //
-// A "category" here is not a real editorial field — the dataset's actual
-// section metadata is missing on ~55% of articles and inconsistent across
-// publications (e.g. "Tech by VICE", "Davos", "Wealth"), so it can't
-// support a clean 10-bucket taxonomy on its own. Instead each category is
-// defined as a documented set of assumption keywords, matched against
-// title/article the same way a topic search already works — same
-// mechanism as the rest of the dashboard, applied to a curated term set
-// instead of one free-text query. This keeps the method explainable and
-// inspectable rather than hiding a classifier behind the scenes.
-export const CATEGORIES = {
-  economy: {
-    label: "Economy",
-    terms: ["economy", "inflation", "GDP", "recession", "unemployment", "interest rate", "stock market", "trade", "tariff", "federal reserve", "jobs report"],
-  },
-  politics: {
-    label: "Politics",
-    terms: ["election", "congress", "senate", "president", "white house", "policy", "republican", "democrat", "legislation", "campaign", "vote"],
-  },
-  world: {
-    label: "World / International",
-    terms: ["foreign policy", "international", "overseas", "embassy", "United Nations", "NATO", "diplomat", "treaty", "refugee", "border crisis"],
-  },
-  sport: {
-    label: "Sport",
-    terms: ["NFL", "NBA", "MLB", "NHL", "soccer", "football", "basketball", "baseball", "Olympics", "championship", "athlete", "coach"],
-  },
-  food: {
-    label: "Food",
-    terms: ["restaurant", "recipe", "chef", "cuisine", "dining", "cooking", "snack", "beverage"],
-  },
-  health: {
-    label: "Health",
-    terms: ["hospital", "doctor", "disease", "virus", "vaccine", "healthcare", "medical", "patient", "FDA", "mental health"],
-  },
-  technology: {
-    label: "Technology",
-    terms: ["startup", "software", "app", "artificial intelligence", "smartphone", "silicon valley", "cybersecurity", "data breach", "tech company"],
-  },
-  media: {
-    label: "Media & Entertainment",
-    terms: ["film", "movie", "television", "streaming", "Netflix", "Hollywood", "celebrity", "music", "box office", "album"],
-  },
-  social: {
-    label: "Social Issues",
-    terms: ["racism", "gender", "inequality", "immigration", "protest", "civil rights", "discrimination", "feminism", "police brutality"],
-  },
+// Ranks the actual articles matching the current topic search by a chosen
+// KPI (sentiment, impressions, or engagement) — a plain sort query, not an
+// aggregation. Far simpler and far more reliable than mining "subjects"
+// with significant_text, which proved too expensive on multi-word shingle
+// fields for this OpenSearch instance to complete reliably. This directly
+// answers "which pieces of content performed best/worst" using real
+// per-article values, no keyword mining involved.
+const RANKING_SORT_FIELD = {
+  sentiment: "sentiment_score",
+  impressions: "estimated_impressions",
+  engagement: "engagement_rate",
 };
-export const CATEGORY_IDS = Object.keys(CATEGORIES);
 
-// bool "should" clause matching any of a category's keyword terms as a
-// phrase in the title or article body — minimum_should_match:1 means
-// "contains at least one of these terms"
-function categoryMatchClause(categoryId) {
-  const terms = CATEGORIES[categoryId].terms;
-  const should = [];
-  for (const t of terms) {
-    should.push({ match_phrase: { title: t } });
-    should.push({ match_phrase: { article: t } });
-  }
-  return { bool: { should, minimum_should_match: 1 } };
-}
+export async function fetchTopicTitleRankings(topic, dateRange = {}, publications = null, metric = "sentiment", size = 20) {
+  const sortField = RANKING_SORT_FIELD[metric] || "sentiment_score";
+  const query = topicFilter(topic, dateRange, publications);
+  const fields = ["title", "publication", "date", "sentiment_score", "estimated_impressions", "engagement_rate", "roi_index"];
 
-function categoryFilter(categoryId, dateRange = {}) {
-  const must = [];
-  if (dateRange.from || dateRange.to) {
-    const range = {};
-    if (dateRange.from) range.gte = dateRange.from;
-    if (dateRange.to) range.lte = dateRange.to;
-    must.push({ range: { date: range } });
-  }
-  if (categoryId === "other") {
-    // "Other" is the catch-all: articles matching none of the 9 defined
-    // categories' keyword sets
-    return {
-      bool: {
-        must,
-        must_not: CATEGORY_IDS.map((id) => categoryMatchClause(id)),
-      },
-    };
-  }
-  must.push(categoryMatchClause(categoryId));
-  return { bool: { must } };
-}
-
-/**
- * Ranks the subjects (topics) most discussed within a category, by
- * sentiment, engagement, and impressions, over a date range. Two-step
- * process mirroring fetchKeywordProminence: (1) significant_text finds
- * candidate subjects specific to this category, (2) a batched msearch
- * scores each candidate on the actual KPI fields. Candidates with fewer
- * than 3 matching articles are dropped as too sparse to be meaningful.
- *
- * phraseLength (1-4) picks single words vs shingled multi-word phrases,
- * same PHRASE_FIELD mechanism and same shingle sub-fields as Related
- * Keywords — defaults to 2 words, since single words ("growth", "market")
- * read as noise where 2-word phrases ("trade war", "interest rates") read
- * as actual topics.
- */
-export async function fetchCategoryLeaderboard(categoryId, dateRange = {}, phraseLength = 2) {
-  const catFilter = categoryFilter(categoryId, dateRange);
-  const field = PHRASE_FIELD[phraseLength] || "article";
-  // Multi-word shingle fields (bigram/trigram/quadgram) are much more
-  // expensive for significant_text than single words, not mainly because
-  // of term-dictionary size but because significant_text re-fetches and
-  // re-tokenizes each matching document's _source to filter near-duplicate
-  // text (filter_duplicate_text, on by default). That per-document cost is
-  // what was timing out. We turn it off here — syndicated near-duplicates
-  // are rare in this corpus outside the documented June 2019 anomaly, so
-  // the trade-off (slightly less deduping) is worth the reliability.
-  const isMultiWord = phraseLength > 1;
-  const fetchSize = isMultiWord ? 15 : 25;
-
-  const candidatesData = await runQuery({
-    size: 0,
-    timeout: "6s",
-    terminate_after: isMultiWord ? 3000 : 15000,
-    query: catFilter,
-    aggs: {
-      subjects: {
-        significant_text: {
-          field,
-          size: fetchSize,
-          shard_size: fetchSize * 2,
-          filter_duplicate_text: !isMultiWord,
-        },
-      },
-    },
-  });
-  const buckets = candidatesData.aggregations?.subjects?.buckets || [];
-  const candidates = buckets
-    .map((b) => b.key)
-    .filter((k) => !containsStopword(k))
-    .slice(0, isMultiWord ? 8 : 15);
-
-  if (candidates.length === 0) {
-    return { category: categoryId, dateRange, phraseLength, subjects: [] };
-  }
-
-  const ndjsonLines = [];
-  for (const c of candidates) {
-    ndjsonLines.push(JSON.stringify({ index: INDEX }));
-    ndjsonLines.push(JSON.stringify({
-      size: 0,
-      timeout: "5s",
-      query: { bool: { must: [catFilter, { match_phrase: { article: c } }] } },
-      aggs: {
-        avg_sentiment: { avg: { field: "sentiment_score" } },
-        avg_engagement: { avg: { field: "engagement_rate" } },
-        total_impressions: { sum: { field: "estimated_impressions" } },
-      },
-    }));
-  }
+  const ndjsonLines = [
+    JSON.stringify({ index: INDEX }),
+    JSON.stringify({ size, query, sort: [{ [sortField]: { order: "desc" } }], _source: fields }),
+    JSON.stringify({ index: INDEX }),
+    JSON.stringify({ size, query, sort: [{ [sortField]: { order: "asc" } }], _source: fields }),
+  ];
   const result = await runMsearch(ndjsonLines);
+  const [topRes, bottomRes] = result.responses;
 
-  const subjects = result.responses
-    .map((resp, i) => ({
-      key: candidates[i],
-      articleCount: resp.hits.total.value,
-      avgSentiment: resp.aggregations.avg_sentiment.value ?? 0,
-      avgEngagement: resp.aggregations.avg_engagement.value ?? 0,
-      totalImpressions: resp.aggregations.total_impressions.value ?? 0,
-    }))
-    .filter((s) => s.articleCount >= 3);
-
-  return { category: categoryId, dateRange, phraseLength, subjects };
-}
-
-/** Matching articles for one subject within a category — powers the click-to-expand row. */
-export async function fetchCategorySubjectArticles(categoryId, subjectKey, dateRange = {}, size = 8) {
-  const catFilter = categoryFilter(categoryId, dateRange);
-  const data = await runQuery({
-    size,
-    query: { bool: { must: [catFilter, { match_phrase: { article: subjectKey } }] } },
-    sort: [{ date: { order: "desc" } }],
-    _source: ["title", "publication", "date"],
-  });
-  return data.hits.hits.map((h) => h._source);
-}
-
-/**
- * Coverage volume for one subject within a category, broken into periods —
- * this is the actual monthly/quarterly/yearly trend, distinct from the
- * leaderboard's single-number totals for the whole selected date range.
- * interval: "month" | "quarter" | "year", same as the rest of the dashboard.
- */
-export async function fetchCategorySubjectTrend(categoryId, subjectKey, dateRange = {}, interval = "month") {
-  const catFilter = categoryFilter(categoryId, dateRange);
-  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
-  const data = await runQuery({
-    size: 0,
-    query: { bool: { must: [catFilter, { match_phrase: { article: subjectKey } }] } },
-    aggs: {
-      periods: { date_histogram: { field: "date", calendar_interval: interval, format } },
-    },
-  });
-  const buckets = data.aggregations?.periods?.buckets || [];
-  return buckets.map((b) => ({ period: b.key_as_string, count: b.doc_count }));
+  return {
+    topic,
+    dateRange,
+    metric,
+    totalMatched: topRes.hits.total.value,
+    top: topRes.hits.hits.map((h) => h._source),
+    bottom: bottomRes.hits.hits.map((h) => h._source),
+  };
 }
 
 /** Fetches everything a topic search needs, in parallel (keywords/contexts load separately). */
