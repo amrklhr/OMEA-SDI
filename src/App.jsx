@@ -383,7 +383,7 @@ function KeywordRow({ k, topic, dateRange, selectedPubs, onPivot }) {
           style={{ borderColor: "#D9D2C2", color: SUBTEXT }}
           title="Search this keyword as a new topic"
         >
-          <Search size={11} /> Analyze
+          <Search size={11} /> Search this keyword
         </button>
         <span className="text-xs" style={{ color: SUBTEXT }}>{k.docCount} articles</span>
       </div>
@@ -447,11 +447,30 @@ function KeywordPanel({ keywords, loading, phraseLength, onPhraseLengthChange, o
           No significant {LENGTHS.find((l) => l.n === phraseLength)?.label} phrases found for this topic.
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          {keywords.map((k) => (
-            <KeywordRow key={k.key} k={k} topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} onPivot={onPivot} />
-          ))}
-        </div>
+        <KeywordList keywords={keywords} topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} onPivot={onPivot} />
+      )}
+    </div>
+  );
+}
+
+function KeywordList({ keywords, topic, dateRange, selectedPubs, onPivot }) {
+  const INITIAL_SHOW = 5;
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? keywords : keywords.slice(0, INITIAL_SHOW);
+  const hasMore = keywords.length > INITIAL_SHOW;
+  return (
+    <div className="flex flex-col gap-3">
+      {visible.map((k) => (
+        <KeywordRow key={k.key} k={k} topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} onPivot={onPivot} />
+      ))}
+      {hasMore && (
+        <button
+          onClick={() => setShowAll(!showAll)}
+          className="self-start rounded-sm border px-3 py-1.5 text-xs font-medium transition-colors"
+          style={{ borderColor: "#D9D2C2", color: SUBTEXT, background: "#FBFAF6" }}
+        >
+          {showAll ? `Show fewer` : `Show ${keywords.length - INITIAL_SHOW} more`}
+        </button>
       )}
     </div>
   );
@@ -852,17 +871,24 @@ function SentimentHistogram({ data, loading }) {
 function SentimentRoiScatter({ sample, selectedPubs, loading }) {
   const byPub = {};
   const allPoints = [];
-  (sample || []).forEach((a) => {
+  const articles = sample?.articles || [];
+  articles.forEach((a) => {
     if (!selectedPubs.includes(a.publication)) return;
     (byPub[a.publication] = byPub[a.publication] || []).push({ x: a.sentiment_score, y: a.roi_index });
     allPoints.push(a.roi_index);
   });
   const stats = computeStats(allPoints);
+  const totalMatched = sample?.totalMatched ?? allPoints.length;
+  const isPartialSample = allPoints.length < totalMatched;
   return (
     <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
       <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Sentiment vs. ROI Index</div>
       <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-        Each point is one article — makes the ROI formula's dependence on sentiment visually inspectable, colored by publication.
+        Each point is one article — makes the ROI formula's dependence on sentiment visually
+        inspectable, colored by publication.
+        {isPartialSample && (
+          <span> Showing a sample of {fmtNum(allPoints.length)} of {fmtNum(totalMatched)} total matching articles (capped for chart performance).</span>
+        )}
       </div>
       {loading ? (
         <div className="flex items-center gap-2 py-6 text-xs" style={{ color: SUBTEXT }}>
@@ -885,7 +911,7 @@ function SentimentRoiScatter({ sample, selectedPubs, loading }) {
       )}
       {!loading && (
         <StatsRow items={[
-          { label: "Articles (n)", value: fmtNum(allPoints.length) },
+          { label: isPartialSample ? `Sampled (of ${fmtNum(totalMatched)})` : "Articles (n)", value: fmtNum(allPoints.length) },
           { label: "Avg ROI", value: fmtPct(stats.avg) },
           { label: "Median ROI", value: fmtPct(stats.median) },
         ]} />
@@ -901,6 +927,7 @@ function CpeByPublicationChart({ publications, selectedPubs }) {
       <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Cost per Engagement by publication</div>
       <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
         Which channels are most cost-efficient, not just highest-reach — lower is better.
+        Note: CPE is formula-driven from engagement rate, so variance between publications is narrow by design.
       </div>
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
@@ -927,17 +954,23 @@ function CpeByPublicationChart({ publications, selectedPubs }) {
 function WordCountEngagementScatter({ sample, selectedPubs, loading }) {
   const byPub = {};
   const allEngagement = [];
-  (sample || []).forEach((a) => {
+  const articles = sample?.articles || [];
+  articles.forEach((a) => {
     if (!selectedPubs.includes(a.publication)) return;
     (byPub[a.publication] = byPub[a.publication] || []).push({ x: a.word_count, y: a.engagement_rate });
     allEngagement.push(a.engagement_rate);
   });
   const stats = computeStats(allEngagement);
+  const totalMatched = sample?.totalMatched ?? allEngagement.length;
+  const isPartialSample = allEngagement.length < totalMatched;
   return (
     <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
       <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Article length vs. engagement</div>
       <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
         Tests whether longer, more substantial articles about this topic actually perform differently.
+        {isPartialSample && (
+          <span> Showing a sample of {fmtNum(allEngagement.length)} of {fmtNum(totalMatched)} total matching articles (capped for chart performance).</span>
+        )}
       </div>
       {loading ? (
         <div className="flex items-center gap-2 py-6 text-xs" style={{ color: SUBTEXT }}>
@@ -960,7 +993,7 @@ function WordCountEngagementScatter({ sample, selectedPubs, loading }) {
       )}
       {!loading && (
         <StatsRow items={[
-          { label: "Articles (n)", value: fmtNum(allEngagement.length) },
+          { label: isPartialSample ? `Sampled (of ${fmtNum(totalMatched)})` : "Articles (n)", value: fmtNum(allEngagement.length) },
           { label: "Avg engagement", value: fmtPct(stats.avg) },
           { label: "Median engagement", value: fmtPct(stats.median) },
         ]} />
@@ -1125,7 +1158,8 @@ function DataAnalystView({ topic, selectedPubs, sentimentDistribution, articleSa
       <div className="flex items-center justify-between text-xs" style={{ color: SUBTEXT }}>
         <span>
           Filtered: topic = <span className="font-mono">{topic.label}</span>
-          &middot; {filtered.length} publication{filtered.length !== 1 ? "s" : ""}, {fmtNum(filtered.reduce((s, p) => s + p.articles, 0))} articles. Click a row to trace its formula.
+          &middot; {filtered.length} publication{filtered.length !== 1 ? "s" : ""}, {fmtNum(filtered.reduce((s, p) => s + p.articles, 0))} articles.
+          <span style={{ color: GOLD }}>&nbsp;&#9662; Click any row below to trace its formula.</span>
         </span>
         <button
           onClick={() => exportPublicationTableCSV(topic, selectedPubs)}
@@ -1192,6 +1226,11 @@ function DataAnalystView({ topic, selectedPubs, sentimentDistribution, articleSa
                         fontFamily: c.key === "name" ? "ui-sans-serif, system-ui" : undefined,
                       }}
                     >
+                      {c.key === "name" && (
+                        <span className="mr-1.5 inline-block" style={{ color: SUBTEXT }}>
+                          {expanded === pub.name ? <ChevronUp size={12} className="inline" /> : <ChevronDown size={12} className="inline" />}
+                        </span>
+                      )}
                       {c.fmt(pub[c.key])}
                     </td>
                   ))}
@@ -1264,7 +1303,7 @@ function useTopic(topicName, dateRange, interval) {
         if (!cancelled) {
           setError(
             err.message.includes("Failed to fetch")
-              ? "Could not reach OpenSearch at localhost:9200. Make sure Docker is running and CORS is enabled."
+              ? "Could not connect to the data backend. If running locally, make sure Docker is running."
               : err.message
           );
         }
@@ -1384,6 +1423,36 @@ function MethodologyView() {
           standard deviations across the currently displayed periods — a simple, explainable
           statistical rule, not a machine-learning anomaly detector. This threshold is computed
           fresh for whatever topic, date range, and channels are currently selected.
+        </div>
+      </div>
+
+      <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+        <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Data quality notes</div>
+        <div className="flex flex-col gap-3 text-sm" style={{ color: "#3A4150" }}>
+          <p>
+            <strong>Dataset:</strong> "All the News 2.0" (Andrew Thompson), sourced from Hugging Face.
+            Contains approximately 74,700 articles from 7 US publications published between
+            January 2016 and mid-July 2019.
+          </p>
+          <p>
+            <strong>Missing fields:</strong> Approximately 28% of articles have no author metadata,
+            and approximately 55% have no editorial section metadata. These gaps are inherent in the
+            source dataset and affect Section-based analyses (Discussion Contexts, section weights
+            in KPI formulas). Articles with missing sections receive a neutral section weight of 1.0.
+          </p>
+          <p>
+            <strong>June 2019 anomaly:</strong> A volume spike in June 2019 appears across all topics
+            and all publications simultaneously. This is a corpus-wide collection artifact near the
+            dataset's end date, not a real coverage event. Keep this in mind when analyzing trends
+            that include mid-2019.
+          </p>
+          <p>
+            <strong>Synthetic KPIs:</strong> Layer 2 metrics (Impressions, Engagement Rate, CTR, CPE,
+            EMV, ROI Index) are formula-driven from documented assumption constants, not measured from
+            real traffic or ad data. Articles from the same publication and section will produce
+            identical impressions and similar engagement values by design. These metrics demonstrate
+            the explainability framework, not real performance measurement.
+          </p>
         </div>
       </div>
     </div>
@@ -1524,7 +1593,7 @@ export default function OmeaDashboard() {
   const [contextsLoading, setContextsLoading] = useState(false);
 
   const [sentimentDistribution, setSentimentDistribution] = useState([]);
-  const [articleSample, setArticleSample] = useState([]);
+  const [articleSample, setArticleSample] = useState({ articles: [], totalMatched: 0 });
   const [analystExtrasLoading, setAnalystExtrasLoading] = useState(false);
 
   const [kpiByPublication, setKpiByPublication] = useState({});
@@ -1595,7 +1664,7 @@ export default function OmeaDashboard() {
       .then(([dist, sample]) => {
         if (!cancelled) { setSentimentDistribution(dist); setArticleSample(sample); }
       })
-      .catch(() => { if (!cancelled) { setSentimentDistribution([]); setArticleSample([]); } })
+      .catch(() => { if (!cancelled) { setSentimentDistribution([]); setArticleSample({ articles: [], totalMatched: 0 }); } })
       .finally(() => { if (!cancelled) setAnalystExtrasLoading(false); });
     return () => { cancelled = true; };
   }, [topic?.label, dateFrom, dateTo, selectedPubs, persona]);
@@ -1640,7 +1709,7 @@ export default function OmeaDashboard() {
               OMEA
             </div>
             <div className="text-xs" style={{ color: SUBTEXT }}>
-              Online Media Effectiveness Analytics &middot; live OpenSearch data
+              Online Media Effectiveness Analytics &middot; 7 publications, 2016&ndash;2019
             </div>
           </div>
 
@@ -1722,15 +1791,16 @@ export default function OmeaDashboard() {
 
             {loading && !topic && (
               <div className="flex items-center gap-2 py-12 text-sm" style={{ color: SUBTEXT }}>
-                <Loader2 size={16} className="animate-spin" /> Querying OpenSearch…
+                <Loader2 size={16} className="animate-spin" /> Loading media data…
               </div>
             )}
 
             {topic && (
               <>
-                <div className="mb-2 -mt-2 text-xs" style={{ color: SUBTEXT }}>
-                  Currently viewing: <span className="font-mono">{topic.label}</span>
-                  {loading && <span className="ml-2"><Loader2 size={10} className="inline animate-spin" /> refreshing…</span>}
+                <div className="mb-3 -mt-2 flex items-center gap-2">
+                  <span className="text-xs" style={{ color: SUBTEXT }}>Currently viewing:</span>
+                  <span className="rounded-sm px-2.5 py-1 font-mono text-sm font-medium" style={{ background: INK, color: PAPER }}>{topic.label}</span>
+                  {loading && <span className="text-xs" style={{ color: SUBTEXT }}><Loader2 size={10} className="inline animate-spin" /> refreshing…</span>}
                 </div>
 
                 {topic.publications.length === 0 ? (
