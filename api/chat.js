@@ -88,11 +88,41 @@ function pct(x) {
   return `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
 }
 
+// dataset only covers 2016-01-01 through 2019-07-13 — clamp any year the
+// user asks about to stay inside that window rather than silently return
+// an empty or misleading range
+function clampToDataset(dateStr) {
+  if (dateStr < DATASET_START) return DATASET_START;
+  if (dateStr > DATASET_END) return DATASET_END;
+  return dateStr;
+}
+
+// pulls an explicit year or year range out of the question itself — e.g.
+// "only for 2016" or "between 2016 and 2018" — so it overrides whatever
+// the dashboard's own date picker currently shows. Without this, a
+// question like "Clinton data only for 2016" silently used the dashboard's
+// date range instead of the one actually asked for.
+function extractDateRange(text) {
+  const rangeMatch = text.match(/\b(201[6-9])\b\s*(?:to|-|–|through|and)\s*\b(201[6-9])\b/);
+  if (rangeMatch) {
+    let [y1, y2] = [parseInt(rangeMatch[1]), parseInt(rangeMatch[2])];
+    if (y1 > y2) [y1, y2] = [y2, y1];
+    return { from: clampToDataset(`${y1}-01-01`), to: clampToDataset(`${y2}-12-31`) };
+  }
+  const yearMatch = text.match(/\b(201[6-9])\b/);
+  if (yearMatch) {
+    const y = yearMatch[1];
+    return { from: clampToDataset(`${y}-01-01`), to: clampToDataset(`${y}-12-31`) };
+  }
+  return null;
+}
+
 async function answerRuleBased(text, context) {
   const intent = detectIntent(text);
   const candidates = extractCandidates(text);
-  const from = context?.dateFrom || undefined;
-  const to = context?.dateTo || undefined;
+  const explicitRange = extractDateRange(text);
+  const from = explicitRange?.from || context?.dateFrom || undefined;
+  const to = explicitRange?.to || context?.dateTo || undefined;
   const rangeLabel = `${from || DATASET_START} to ${to || DATASET_END}`;
 
   if (intent === "compare") {
