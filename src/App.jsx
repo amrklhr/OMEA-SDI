@@ -782,8 +782,8 @@ function ContentInsightsView({ keywords, keywordsLoading, phraseLength, onPhrase
   );
 }
 
-function BrandComparisonView({ dateRange, interval }) {
-  const [brandInputs, setBrandInputs] = useState(["Facebook", "Google"]);
+function BrandComparisonView({ dateRange, interval, initialSubject }) {
+  const [brandInputs, setBrandInputs] = useState([initialSubject || "", ""]);
   const [brandData, setBrandData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -2446,7 +2446,7 @@ export default function OmeaDashboard() {
               interval={interval}
               onIntervalChange={setInterval}
             />
-            <BrandComparisonView dateRange={dateRange} interval={interval} />
+            <BrandComparisonView dateRange={dateRange} interval={interval} initialSubject={currentTopicName} />
           </>
         ) : (
           <>
