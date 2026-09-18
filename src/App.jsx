@@ -11,7 +11,7 @@ import {
   fetchSentimentDistribution, fetchArticleSample,
   fetchArticlesForKeyword, fetchArticlesForSection,
   fetchMonthlyKpiBreakdown, fetchBrandComparison, fetchPriorPeriodSummary,
-  fetchTopicTitleRankings,
+  fetchTopicTitleRankings, fetchBrandThemes,
 } from "./opensearchClient";
 
 const INK = "#1B2430";
@@ -785,6 +785,7 @@ function ContentInsightsView({ keywords, keywordsLoading, phraseLength, onPhrase
 function BrandComparisonView({ dateRange, interval, initialSubject }) {
   const [brandInputs, setBrandInputs] = useState([initialSubject || "", ""]);
   const [brandData, setBrandData] = useState([]);
+  const [themes, setThemes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [hasCompared, setHasCompared] = useState(false);
@@ -808,8 +809,12 @@ function BrandComparisonView({ dateRange, interval, initialSubject }) {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchBrandComparison(brands, dateRange, interval);
+      const [data, themeData] = await Promise.all([
+        fetchBrandComparison(brands, dateRange, interval),
+        fetchBrandThemes(brands, dateRange),
+      ]);
       setBrandData(data);
+      setThemes(themeData);
       setHasCompared(true);
     } catch (err) {
       setError(err.message);
@@ -927,6 +932,8 @@ function BrandComparisonView({ dateRange, interval, initialSubject }) {
             }))} />
           </div>
 
+          {/* publication mix comparison */}
+          <PublicationMixChart brandData={brandData} />
           {/* impressions comparison */}
           <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
             <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Impressions comparison</div>
@@ -966,6 +973,9 @@ function BrandComparisonView({ dateRange, interval, initialSubject }) {
             </ResponsiveContainer>
           </div>
 
+          {/* sentiment distribution comparison */}
+          <SentimentDistributionComparison brandData={brandData} />
+
           {/* sentiment trend over time */}
           <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
             <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Sentiment trend over time</div>
@@ -985,6 +995,12 @@ function BrandComparisonView({ dateRange, interval, initialSubject }) {
               </LineChart>
             </ResponsiveContainer>
           </div>
+
+          {/* sample headlines */}
+          <SampleHeadlinesPanel brandData={brandData} />
+
+          {/* related themes */}
+          <RelatedThemesPanel themes={themes} />
 
           {/* summary table */}
           <div className="overflow-x-auto rounded-sm border" style={{ borderColor: "#D9D2C2" }}>
@@ -1030,6 +1046,144 @@ function BrandComparisonView({ dateRange, interval, initialSubject }) {
   );
 }
 
+function PublicationMixChart({ brandData }) {
+  // union of every publication that appears for any compared subject
+  const allPubs = [...new Set(brandData.flatMap((b) => Object.keys(b.publications)))];
+  const chartData = allPubs.map((pub) => {
+    const row = { publication: pub };
+    brandData.forEach((b) => { row[b.brand] = b.publications[pub] || 0; });
+    return row;
+  });
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Publication mix</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        Which outlets drive each subject's coverage. Two subjects can share the same average sentiment
+        while being covered by completely different publications — this is where that difference shows up.
+      </div>
+      <ResponsiveContainer width="100%" height={Math.max(160, allPubs.length * 32)}>
+        <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 20, left: 10, bottom: 0 }}>
+          <CartesianGrid stroke="#E3DDCE" horizontal={false} />
+          <XAxis type="number" tick={{ fontSize: 10, fill: SUBTEXT }} />
+          <YAxis type="category" dataKey="publication" tick={{ fontSize: 11, fill: INK }} width={120} />
+          <Tooltip contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          {brandData.map((b, i) => (
+            <Bar key={b.brand} dataKey={b.brand} fill={BRAND_COLORS[i]} />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function SentimentDistributionComparison({ brandData }) {
+  // same bucket labels as the single-topic Sentiment Distribution chart, for visual consistency
+  const bucketLabels = ["-1.0 to -0.8", "-0.8 to -0.6", "-0.6 to -0.4", "-0.4 to -0.2", "-0.2 to 0.0", "0.0 to 0.2", "0.2 to 0.4", "0.4 to 0.6", "0.6 to 0.8", "0.8 to 1.2"];
+  const bucketStarts = [-1, -0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8];
+  const chartData = bucketLabels.map((label, i) => {
+    const row = { bucket: label };
+    brandData.forEach((b) => {
+      const match = b.sentimentHistogram.find((h) => Math.abs(h.bucketStart - bucketStarts[i]) < 0.01);
+      row[b.brand] = match ? match.count : 0;
+    });
+    return row;
+  });
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Sentiment distribution comparison</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        How sentiment is actually spread out, not just the average. Two subjects can share the same
+        average sentiment while one is uniformly mild and the other is polarized between strongly
+        positive and strongly negative coverage.
+      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        <BarChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+          <CartesianGrid stroke="#E3DDCE" vertical={false} />
+          <XAxis dataKey="bucket" tick={{ fontSize: 9, fill: SUBTEXT }} angle={-35} textAnchor="end" height={60} />
+          <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} allowDecimals={false} />
+          <Tooltip contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          {brandData.map((b, i) => (
+            <Bar key={b.brand} dataKey={b.brand} fill={BRAND_COLORS[i]} />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function SampleHeadlinesPanel({ brandData }) {
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Sample headlines</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        The most positive and most negative article for each subject — a feel for the actual coverage, not just a score.
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {brandData.map((b, i) => (
+          <div key={b.brand} className="rounded-sm border p-3" style={{ borderColor: "#E3DDCE" }}>
+            <div className="mb-2 flex items-center gap-1.5 text-sm font-medium" style={{ color: INK }}>
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: BRAND_COLORS[i] }} />
+              {b.brand}
+            </div>
+            {b.topHeadline ? (
+              <div className="mb-2 text-xs">
+                <div className="font-medium" style={{ color: POS }}>Most positive ({(b.topHeadline.sentiment_score >= 0 ? "+" : "") + b.topHeadline.sentiment_score.toFixed(2)})</div>
+                <div style={{ color: INK }}>{b.topHeadline.title}</div>
+                <div style={{ color: SUBTEXT }}>{b.topHeadline.publication}</div>
+              </div>
+            ) : null}
+            {b.bottomHeadline ? (
+              <div className="text-xs">
+                <div className="font-medium" style={{ color: NEG }}>Most negative ({(b.bottomHeadline.sentiment_score >= 0 ? "+" : "") + b.bottomHeadline.sentiment_score.toFixed(2)})</div>
+                <div style={{ color: INK }}>{b.bottomHeadline.title}</div>
+                <div style={{ color: SUBTEXT }}>{b.bottomHeadline.publication}</div>
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RelatedThemesPanel({ themes }) {
+  if (!themes || themes.length === 0) return null;
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Related themes</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        The words most distinctively associated with each subject's coverage (same significant_text
+        method as Related Keywords in Content Insights). Subjects with similar KPI numbers can still
+        be covering very different things.
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {themes.map((t, i) => (
+          <div key={t.brand}>
+            <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium" style={{ color: INK }}>
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: BRAND_COLORS[i] }} />
+              {t.brand}
+            </div>
+            {t.themes.length === 0 ? (
+              <div className="text-xs" style={{ color: SUBTEXT }}>No distinctive themes found.</div>
+            ) : (
+              <div className="flex flex-wrap gap-1">
+                {t.themes.map((word) => (
+                  <span key={word} className="rounded-full px-2 py-0.5 text-xs" style={{ background: "#F5F1E8", color: "#3A4150" }}>
+                    {word}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
 function BrandInsightsPanel({ brandData, totalVolume }) {
   const sorted = [...brandData].sort((a, b) => b.volume - a.volume);
   const leader = sorted[0];
@@ -1067,6 +1221,43 @@ function BrandInsightsPanel({ brandData, totalVolume }) {
     text: `${bestRoi.brand} achieves the best ROI Index (${fmtPct(bestRoi.roi)}), meaning their coverage generates the most earned value per impression.`,
     recommendation: `Analyze the content type and publication mix that ${bestRoi.brand} uses to replicate their efficiency.`,
   });
+
+  // publication concentration: which subject's coverage is most dependent on a single outlet
+  const concentration = brandData.map((b) => {
+    const counts = Object.values(b.publications);
+    const total = counts.reduce((s, c) => s + c, 0);
+    const topCount = counts.length > 0 ? Math.max(...counts) : 0;
+    return { brand: b.brand, share: total > 0 ? topCount / total : 0, topPub: Object.entries(b.publications).sort((x, y) => y[1] - x[1])[0]?.[0] };
+  });
+  const mostConcentrated = [...concentration].sort((a, b) => b.share - a.share)[0];
+  if (mostConcentrated && mostConcentrated.share > 0.5) {
+    insights.push({
+      type: "warning",
+      title: "Concentrated coverage",
+      text: `${(mostConcentrated.share * 100).toFixed(0)}% of ${mostConcentrated.brand}'s coverage comes from a single outlet (${mostConcentrated.topPub}).`,
+      recommendation: `Diversifying media relationships beyond ${mostConcentrated.topPub} would reduce dependency on one publication's editorial stance.`,
+    });
+  }
+
+  // sentiment volatility: which subject has the most spread-out (polarized) sentiment distribution
+  const volatility = brandData.map((b) => {
+    const total = b.sentimentHistogram.reduce((s, h) => s + h.count, 0);
+    if (total === 0) return { brand: b.brand, spread: 0 };
+    // share of articles in the two extreme buckets (strongly negative or strongly positive)
+    const extremeCount = b.sentimentHistogram
+      .filter((h) => h.bucketStart <= -0.6 || h.bucketStart >= 0.6)
+      .reduce((s, h) => s + h.count, 0);
+    return { brand: b.brand, spread: extremeCount / total };
+  });
+  const mostPolarized = [...volatility].sort((a, b) => b.spread - a.spread)[0];
+  if (mostPolarized && mostPolarized.spread > 0.3) {
+    insights.push({
+      type: "warning",
+      title: "Polarized coverage",
+      text: `${(mostPolarized.spread * 100).toFixed(0)}% of ${mostPolarized.brand}'s coverage falls at a sentiment extreme (strongly positive or strongly negative), rather than neutral.`,
+      recommendation: `Check Sample Headlines and Sentiment Distribution above to see what's driving the extremes — this pattern often means a single controversial event dominates the coverage.`,
+    });
+  }
 
   const iconFor = (type) => {
     if (type === "positive") return <TrendingUp size={14} style={{ color: POS }} />;

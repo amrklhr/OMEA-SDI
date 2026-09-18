@@ -674,14 +674,18 @@ export async function fetchTopicData(topic, dateRange = {}, interval = "month") 
 }
 
 /**
- * Brand comparison — runs a batched msearch for multiple brands at once.
- * For each brand: one summary query (volume, sentiment, impressions, emv)
- * plus one time-series query (monthly volume + sentiment + publication breakdown).
- * Returns an array of brand data objects ready for comparative charts.
+ * Brand/subject comparison — runs a batched msearch for multiple subjects
+ * at once. For each subject: a summary query, a monthly+publication
+ * breakdown query, a sentiment histogram (same bucket scheme as the
+ * single-topic Sentiment Distribution chart, for visual consistency), and
+ * two single-article lookups for the most positive and most negative
+ * headline. Returns an array of subject data objects ready for
+ * comparative charts.
  */
 export async function fetchBrandComparison(brands, dateRange = {}, interval = "month") {
   const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
   const ndjsonLines = [];
+  const headlineFields = ["title", "publication", "sentiment_score"];
 
   for (const brand of brands) {
     // summary query
@@ -710,14 +714,40 @@ export async function fetchBrandComparison(brands, dateRange = {}, interval = "m
         by_publication: { terms: { field: "publication", size: 30 } },
       },
     }));
+    // sentiment distribution — same bucket scheme as the single-topic chart
+    ndjsonLines.push(JSON.stringify({ index: INDEX }));
+    ndjsonLines.push(JSON.stringify({
+      size: 0,
+      query: topicFilter(brand, dateRange),
+      aggs: {
+        sentiment_histogram: {
+          histogram: { field: "sentiment_score", interval: 0.2, extended_bounds: { min: -1, max: 0.8 } },
+        },
+      },
+    }));
+    // most positive headline
+    ndjsonLines.push(JSON.stringify({ index: INDEX }));
+    ndjsonLines.push(JSON.stringify({
+      size: 1, query: topicFilter(brand, dateRange), sort: [{ sentiment_score: { order: "desc" } }], _source: headlineFields,
+    }));
+    // most negative headline
+    ndjsonLines.push(JSON.stringify({ index: INDEX }));
+    ndjsonLines.push(JSON.stringify({
+      size: 1, query: topicFilter(brand, dateRange), sort: [{ sentiment_score: { order: "asc" } }], _source: headlineFields,
+    }));
   }
 
   const result = await runMsearch(ndjsonLines);
   const brandData = [];
+  const QUERIES_PER_BRAND = 5;
 
   for (let i = 0; i < brands.length; i++) {
-    const summaryResp = result.responses[i * 2];
-    const detailResp = result.responses[i * 2 + 1];
+    const base = i * QUERIES_PER_BRAND;
+    const summaryResp = result.responses[base];
+    const detailResp = result.responses[base + 1];
+    const histResp = result.responses[base + 2];
+    const topHeadlineResp = result.responses[base + 3];
+    const bottomHeadlineResp = result.responses[base + 4];
     const aggs = summaryResp.aggregations;
 
     const monthly = {};
@@ -730,6 +760,9 @@ export async function fetchBrandComparison(brands, dateRange = {}, interval = "m
       publications[b.key] = b.doc_count;
     }
 
+    const sentimentHistogram = (histResp.aggregations?.sentiment_histogram?.buckets || [])
+      .map((b) => ({ bucketStart: b.key, count: b.doc_count }));
+
     brandData.push({
       brand: brands[i],
       volume: summaryResp.hits.total.value,
@@ -740,8 +773,40 @@ export async function fetchBrandComparison(brands, dateRange = {}, interval = "m
       roi: aggs.avg_roi.value ?? 0,
       monthly,
       publications,
+      sentimentHistogram,
+      topHeadline: topHeadlineResp.hits.hits[0]?._source || null,
+      bottomHeadline: bottomHeadlineResp.hits.hits[0]?._source || null,
     });
   }
 
   return brandData;
 }
+
+/**
+ * Related themes per subject — the single words most distinctively
+ * associated with each subject's coverage, so subjects with similar KPI
+ * numbers can still be told apart by what they're actually about. Uses
+ * single-word significant_text only (not multi-word shingle fields),
+ * which past testing showed is fast and reliable, unlike the multi-word
+ * version that had to be removed from Best & Worst for timing out.
+ */
+export async function fetchBrandThemes(brands, dateRange = {}, size = 8) {
+  const ndjsonLines = [];
+  for (const brand of brands) {
+    ndjsonLines.push(JSON.stringify({ index: INDEX }));
+    ndjsonLines.push(JSON.stringify({
+      size: 0,
+      query: topicFilter(brand, dateRange),
+      aggs: {
+        themes: { significant_text: { field: "article", size: size + 5, exclude: [brand.toLowerCase()] } },
+      },
+    }));
+  }
+  const result = await runMsearch(ndjsonLines);
+  return brands.map((brand, i) => {
+    const buckets = result.responses[i].aggregations?.themes?.buckets || [];
+    const words = buckets.map((b) => b.key).filter((k) => !containsStopword(k)).slice(0, size);
+    return { brand, themes: words };
+  });
+}
+
