@@ -288,7 +288,12 @@ export async function fetchArticleSample(topic, dateRange = {}, publications = n
     _source: ["publication", "sentiment_score", "roi_index", "word_count", "engagement_rate"],
   };
   const data = await runQuery(body);
-  return data.hits.hits.map((h) => h._source);
+  // return { articles, totalMatched } so scatter charts can show
+  // sampled N of M when result is capped at size
+  return {
+    articles: data.hits.hits.map((h) => h._source),
+    totalMatched: data.hits.total.value,
+  };
 }
 
 /**
