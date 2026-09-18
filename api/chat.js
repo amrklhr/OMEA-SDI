@@ -75,6 +75,46 @@ function extractCandidates(text) {
   return out;
 }
 
+// the same brands suggested on the dashboard's search box — checked
+// case-insensitively so "facebook" (lowercase) still matches even though
+// it wouldn't be picked up by capitalized-word extraction
+const SUGGESTED_TOPICS = ["Facebook", "Google", "Amazon", "Apple", "Twitter"];
+
+function matchSuggestedTopic(text) {
+  const lower = text.toLowerCase();
+  for (const name of SUGGESTED_TOPICS) {
+    if (new RegExp(`\\b${name.toLowerCase()}\\b`).test(lower)) return name;
+  }
+  return null;
+}
+
+// generic filler words that sometimes get captured right after a
+// preposition ("data related to X", "info about X") — skip past these to
+// find the actual topic word instead of returning "data" or "info"
+const FILLER_WORDS = new Set([
+  "data", "information", "info", "coverage", "articles", "article", "media",
+  "news", "stats", "statistics", "numbers", "results", "everything", "all",
+  "the", "a", "an", "topic", "subject", "performance", "sentiment",
+  "engagement", "impressions", "details", "stuff",
+]);
+
+// fallback for lowercase topic mentions that aren't in the suggested list —
+// looks for a word following a preposition like "about", "for", "related
+// to", skipping generic filler words, e.g. "give me all data related to
+// facebook in 2016" → "facebook"
+function extractPhraseTopic(text) {
+  const re = /\b(?:about|regarding|related to|concerning|for|on)\s+([a-z0-9][a-z0-9&'.-]*(?:\s+[a-z0-9][a-z0-9&'.-]*){0,2})/gi;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const words = match[1].split(/\s+/);
+    while (words.length > 0 && FILLER_WORDS.has(words[0].toLowerCase())) words.shift();
+    if (words.length > 0 && !FILLER_WORDS.has(words[0].toLowerCase())) {
+      return words.slice(0, 2).join(" ");
+    }
+  }
+  return null;
+}
+
 function detectIntent(text) {
   const m = text.toLowerCase();
   if (/\bcompare\b|\bvs\.?\b|\bversus\b/.test(m)) return "compare";
@@ -143,7 +183,7 @@ async function answerRuleBased(text, context) {
     return `Between ${rangeLabel}: ${x.brand} had ${x.articleCount} articles (sentiment ${pct(x.avgSentiment)}, ROI ${pct(x.roiIndex)}) vs ${y.brand} with ${y.articleCount} articles (sentiment ${pct(y.avgSentiment)}, ROI ${pct(y.roiIndex)}). ${volLeader.brand} leads on coverage volume, ${sentLeader.brand} leads on sentiment.`;
   }
 
-  const topic = candidates[0] || context?.topic;
+  const topic = matchSuggestedTopic(text) || candidates[0] || extractPhraseTopic(text) || context?.topic;
   if (!topic) {
     return `I need a topic to look up. Try something like "what's the sentiment for Facebook" or search a topic on the dashboard first.`;
   }
