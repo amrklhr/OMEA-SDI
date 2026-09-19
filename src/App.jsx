@@ -11,7 +11,7 @@ import {
   fetchSentimentDistribution, fetchArticleSample,
   fetchArticlesForKeyword, fetchArticlesForSection,
   fetchMonthlyKpiBreakdown, fetchBrandComparison, fetchPriorPeriodSummary,
-  fetchTopicTitleRankings, fetchBrandThemes,
+  fetchTopicTitleRankings, fetchBrandThemes, fetchAllTopicArticles,
 } from "./opensearchClient";
 
 const INK = "#1B2430";
@@ -1292,6 +1292,8 @@ function TitleRankingsView({ topic, dateRange, selectedPubs }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
 
   useEffect(() => {
     if (!topic?.label) return;
@@ -1305,6 +1307,33 @@ function TitleRankingsView({ topic, dateRange, selectedPubs }) {
     return () => { cancelled = true; };
   }, [topic?.label, dateRange.from, dateRange.to, selectedPubs, metric]);
 
+  async function handleExportAll() {
+    if (!topic?.label) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const result = await fetchAllTopicArticles(topic.label, dateRange, selectedPubs);
+      const header = ["Title", "Publisher", "Publish Date", "Sentiment", "Impressions", "EMV", "Engagement Rate"];
+      const rows = result.articles.map((a) => [
+        a.title,
+        a.publication,
+        a.date,
+        (a.sentiment_score ?? 0).toFixed(3),
+        Math.round(a.estimated_impressions || 0),
+        (a.emv ?? 0).toFixed(2),
+        (a.engagement_rate ?? 0).toFixed(4),
+      ]);
+      downloadCSV(`omea_${topic.label}_all_articles.csv`, [header, ...rows]);
+      if (result.totalMatched > result.articles.length) {
+        setExportError(`Exported the first ${fmtNum(result.articles.length)} of ${fmtNum(result.totalMatched)} matching articles (export cap reached). Narrow the date range to get the rest.`);
+      }
+    } catch (err) {
+      setExportError(err.message);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   function formatMetric(article) {
     if (metric === "impressions") return fmtNum(Math.round(article.estimated_impressions || 0));
     if (metric === "engagement") return fmtPct(article.engagement_rate || 0);
@@ -1315,11 +1344,23 @@ function TitleRankingsView({ topic, dateRange, selectedPubs }) {
   return (
     <div className="flex flex-col gap-6">
       <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
-        <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Best &amp; worst performing titles</div>
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
+          <div className="font-serif text-lg" style={{ color: INK }}>Best &amp; worst performing titles</div>
+          <button
+            onClick={handleExportAll}
+            disabled={exporting || !topic?.label}
+            className="flex items-center gap-1.5 rounded-sm border px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+            style={{ borderColor: "#D9D2C2", color: SUBTEXT, background: "#FBFAF6" }}
+          >
+            {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+            {exporting ? "Exporting…" : "Export all matching articles (CSV)"}
+          </button>
+        </div>
         <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
           The top 20 and bottom 20 articles matching{" "}
           <span className="font-mono">{topic?.label}</span> for the selected date range, ranked by
           sentiment, impressions, or engagement. Real per-article values — no keyword mining involved.
+          The export button pulls every matching article, not just the 40 shown below.
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-xs" style={{ color: SUBTEXT }}>Rank by:</span>
@@ -1343,6 +1384,12 @@ function TitleRankingsView({ topic, dateRange, selectedPubs }) {
           ))}
         </div>
       </div>
+
+      {exportError && (
+        <div className="rounded-sm border px-4 py-3 text-xs" style={{ borderColor: "#D9D2C2", background: "#FBFAF6", color: NEG }}>
+          {exportError}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-sm border px-4 py-3 text-xs" style={{ borderColor: "#D9D2C2", background: "#FBFAF6", color: NEG }}>

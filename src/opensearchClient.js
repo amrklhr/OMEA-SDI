@@ -661,6 +661,30 @@ export async function fetchTopicTitleRankings(topic, dateRange = {}, publication
   };
 }
 
+/**
+ * Every article matching the current topic and date range, for CSV export
+ * from Best & Worst — not just the top/bottom 20 shown on screen. Capped
+ * at OpenSearch's default max_result_window (10,000); if a topic somehow
+ * matches more than that, only the first 10,000 by date are returned and
+ * totalMatched will read higher than articles.length so the caller can
+ * warn the user.
+ */
+export async function fetchAllTopicArticles(topic, dateRange = {}, publications = null) {
+  const CAP = 10000;
+  const query = topicFilter(topic, dateRange, publications);
+  const fields = ["title", "publication", "date", "sentiment_score", "estimated_impressions", "emv", "engagement_rate"];
+  const data = await runQuery({
+    size: CAP,
+    query,
+    sort: [{ date: { order: "desc" } }],
+    _source: fields,
+  });
+  return {
+    totalMatched: data.hits.total.value,
+    articles: data.hits.hits.map((h) => h._source),
+  };
+}
+
 /** Fetches everything a topic search needs, in parallel (keywords/contexts load separately). */
 export async function fetchTopicData(topic, dateRange = {}, interval = "month") {
   const [summary, monthlyByPublication, monthlyEmvByPublication, publications, spotlight] = await Promise.all([
