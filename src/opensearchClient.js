@@ -653,6 +653,27 @@ function containsStopword(phrase) {
   return phrase.split(/\s+/).some((word) => STOPWORDS.has(word.toLowerCase()));
 }
 
+/**
+ * Terms for the word cloud visual — single words only (word clouds don't
+ * read well with multi-word phrases), no per-word context lookup (unlike
+ * Related Keywords), so this stays a single cheap query even at 25 terms.
+ */
+export async function fetchWordCloudTerms(topic, dateRange = {}, publications = null, size = 25) {
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange, publications),
+    aggs: {
+      cloud_terms: { significant_text: { field: "article", size: size + 10, exclude: [topic.toLowerCase()] } },
+    },
+  };
+  const data = await runQuery(body);
+  const buckets = data.aggregations?.cloud_terms?.buckets || [];
+  return buckets
+    .filter((b) => !containsStopword(b.key))
+    .slice(0, size)
+    .map((b) => ({ key: b.key, docCount: b.doc_count }));
+}
+
 export async function fetchKeywordProminence(topic, phraseLength = 1, dateRange = {}, publications = null) {
   const field = PHRASE_FIELD[phraseLength] || "article";
   // Multi-word modes fetch extra candidates up front, since some will be

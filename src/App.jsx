@@ -7,7 +7,7 @@ import {
   Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, Check, List, MessageCircle, AlertTriangle, Plus, X, Lightbulb, ArrowUp, ArrowDown,
 } from "lucide-react";
 import {
-  fetchTopicData, fetchKeywordProminence, fetchContextBreakdown, fetchSentimentImpressionBuckets,
+  fetchTopicData, fetchKeywordProminence, fetchContextBreakdown, fetchSentimentImpressionBuckets, fetchWordCloudTerms,
   fetchSentimentDistribution, fetchArticleSample,
   fetchArticlesForKeyword, fetchArticlesForSection,
   fetchMonthlyKpiBreakdown, fetchBrandComparison, fetchPriorPeriodSummary,
@@ -751,9 +751,94 @@ function ContextTrendChart({ monthlyBySection, sections, totalMatched }) {
   );
 }
 
+function WordCloudPanel({ topic, dateRange, selectedPubs, onPivot }) {
+  const [words, setWords] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!topic?.label) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchWordCloudTerms(topic.label, dateRange, selectedPubs, 25)
+      .then((data) => { if (!cancelled) setWords(data); })
+      .catch((err) => { if (!cancelled) setError(err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [topic?.label, dateRange.from, dateRange.to, selectedPubs]);
+
+  // tag each word with a size/color tier by rank before reordering, so
+  // visual weight still reflects true prominence after the layout mixes
+  // big and small words together
+  const sorted = [...words].sort((a, b) => b.docCount - a.docCount);
+  const tierSize = Math.ceil(sorted.length / 3);
+  const tiered = sorted.map((w, i) => ({
+    ...w,
+    tier: i < tierSize ? 0 : i < tierSize * 2 ? 1 : 2,
+  }));
+
+  // interleave tiers round-robin so the cloud doesn't read as a simple
+  // biggest-to-smallest list — a real word cloud mixes sizes throughout
+  const tiers = [
+    tiered.filter((w) => w.tier === 0),
+    tiered.filter((w) => w.tier === 1),
+    tiered.filter((w) => w.tier === 2),
+  ];
+  const maxLen = Math.max(0, ...tiers.map((t) => t.length));
+  const displayOrder = [];
+  for (let i = 0; i < maxLen; i++) {
+    for (const t of tiers) if (t[i]) displayOrder.push(t[i]);
+  }
+
+  const counts = sorted.map((w) => w.docCount);
+  const maxCount = counts.length ? Math.max(...counts) : 1;
+  const minCount = counts.length ? Math.min(...counts) : 0;
+  function fontSizeFor(count) {
+    const MIN_PX = 13, MAX_PX = 34;
+    if (maxCount === minCount) return (MIN_PX + MAX_PX) / 2;
+    const t = (count - minCount) / (maxCount - minCount);
+    return MIN_PX + Math.sqrt(t) * (MAX_PX - MIN_PX);
+  }
+  const tierColor = [INK, "#7B6E5A", SUBTEXT];
+
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Word cloud</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        The 25 words most distinctively associated with this topic's coverage, sized by how often
+        they appear (same significant_text method as Related Keywords). Click a word to search it.
+      </div>
+      {error && <div className="mb-3 text-xs" style={{ color: NEG }}>{error}</div>}
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-10 text-sm" style={{ color: SUBTEXT }}>
+          <Loader2 size={16} className="animate-spin" /> Loading…
+        </div>
+      ) : displayOrder.length === 0 ? (
+        <div className="py-6 text-sm" style={{ color: SUBTEXT }}>No distinctive words found for this topic and date range.</div>
+      ) : (
+        <div className="flex flex-wrap items-baseline justify-center gap-x-4 gap-y-2 px-2 py-4">
+          {displayOrder.map((w) => (
+            <button
+              key={w.key}
+              onClick={() => onPivot?.(w.key)}
+              title={`${fmtNum(w.docCount)} articles`}
+              className="font-medium leading-none transition-opacity hover:opacity-70"
+              style={{ fontSize: `${fontSizeFor(w.docCount)}px`, color: tierColor[w.tier] }}
+            >
+              {w.key}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ContentInsightsView({ keywords, keywordsLoading, phraseLength, onPhraseLengthChange, contexts, contextsLoading, onPivotSearch, topic, dateRange, selectedPubs }) {
   return (
     <div className="flex flex-col gap-8">
+      <WordCloudPanel topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} onPivot={onPivotSearch} />
       <ContextTrendChart monthlyBySection={contexts.monthlyBySection} sections={contexts.sections} totalMatched={contexts.totalMatched} />
       <ContextPanel
         sections={contexts.sections}
