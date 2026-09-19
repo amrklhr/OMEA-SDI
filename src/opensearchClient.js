@@ -647,10 +647,46 @@ const STOPWORDS = new Set([
   "this", "that", "these", "those", "who", "whom", "which", "what",
   "all", "any", "both", "each", "few", "more", "most", "other", "some",
   "such", "no", "not", "only", "own", "same", "too", "very", "just",
+  // contractions — the analyzer keeps these as single tokens with the
+  // apostrophe intact, so they never matched the plain STOPWORDS above
+  "don't", "doesn't", "didn't", "isn't", "wasn't", "aren't", "weren't",
+  "can't", "couldn't", "won't", "wouldn't", "shouldn't", "haven't", "hasn't",
+  "it's", "that's", "there's", "here's", "what's", "who's", "let's",
+  "i'm", "i've", "i'll", "i'd", "you're", "you've", "you'll", "you'd",
+  "he's", "she's", "we're", "we've", "we'll", "they're", "they've", "they'll",
+  // generic conversational filler — grammatically fine, but say nothing
+  // about what a topic's coverage is actually about
+  "like", "get", "got", "getting", "one", "know", "going", "go", "goes", "went",
+  "really", "actually", "thing", "things", "said", "says", "say", "saying",
+  "way", "also", "back", "even", "still", "much", "many", "well", "good",
+  "first", "last", "new", "old", "us", "make", "made", "making", "take",
+  "took", "taken", "come", "came", "see", "seen", "look", "looking", "want",
+  "need", "using", "used", "use",
+  // syndication/publishing boilerplate — the actual source of the noise
+  // reported in this project's word cloud: shared footer/byline text
+  // ("this story originally appeared on X", "follow us on Twitter") is
+  // genuinely unusually frequent within a topic if many of its articles
+  // share the same syndication template, so significant_text correctly
+  // flags it as "significant" even though it's not about the topic at all
+  "originally", "appeared", "follow", "following", "subscribe", "subscribed",
+  "click", "read", "reading", "share", "shared", "sharing", "comment",
+  "comments", "commenting", "tweet", "tweeted", "tweets", "post", "posted",
+  "posting", "article", "articles", "story", "stories", "page", "pages",
+  "content", "published", "publish", "editor", "correction", "updated",
+  "update", "via", "photo", "photos", "image", "images", "video", "videos",
+  "watch", "watched", "app", "mobile",
 ]);
 
+// domain-like tokens ("recode.net", "vice.com") slip past ordinary
+// stopword filtering since they're not stopwords — they're syndication
+// footer artifacts ("this story originally appeared on recode.net").
+// Real single content words never contain a literal period.
+function looksLikeDomain(word) {
+  return /\./.test(word);
+}
+
 function containsStopword(phrase) {
-  return phrase.split(/\s+/).some((word) => STOPWORDS.has(word.toLowerCase()));
+  return phrase.split(/\s+/).some((word) => STOPWORDS.has(word.toLowerCase()) || looksLikeDomain(word));
 }
 
 /**
@@ -662,8 +698,10 @@ export async function fetchWordCloudTerms(topic, dateRange = {}, publications = 
   const body = {
     size: 0,
     query: topicFilter(topic, dateRange, publications),
+    // fetch generously past `size` — filtering out boilerplate/filler
+    // below can remove a large share of raw candidates
     aggs: {
-      cloud_terms: { significant_text: { field: "article", size: size + 10, exclude: [topic.toLowerCase()] } },
+      cloud_terms: { significant_text: { field: "article", size: size * 3, exclude: [topic.toLowerCase()] } },
     },
   };
   const data = await runQuery(body);
@@ -676,10 +714,13 @@ export async function fetchWordCloudTerms(topic, dateRange = {}, publications = 
 
 export async function fetchKeywordProminence(topic, phraseLength = 1, dateRange = {}, publications = null) {
   const field = PHRASE_FIELD[phraseLength] || "article";
-  // Multi-word modes fetch extra candidates up front, since some will be
-  // filtered out below for containing a connector word like "and" or "of" —
-  // this keeps the final result count close to a full 10 after filtering.
-  const fetchSize = phraseLength > 1 ? 30 : 10;
+  // Fetch extra candidates up front for every phrase length, single words
+  // included — some will be filtered out below for being a connector word,
+  // a contraction, or syndication boilerplate ("originally", "appeared",
+  // "follow") — this keeps the final result count close to a full 10 after
+  // filtering, whereas the single-word path previously skipped this filter
+  // entirely and let that boilerplate straight through.
+  const fetchSize = 30;
   const sigTextAgg = { field, size: fetchSize };
   // Only exclude the topic term itself for single-word mode — for phrases,
   // terms like "facebook scandal" that include the topic are exactly the
@@ -695,9 +736,7 @@ export async function fetchKeywordProminence(topic, phraseLength = 1, dateRange 
   const buckets = data.aggregations?.prominent_keywords?.buckets || [];
   let keywords = buckets.map((b) => ({ key: b.key, score: b.score, docCount: b.doc_count }));
 
-  if (phraseLength > 1) {
-    keywords = keywords.filter((k) => !containsStopword(k.key)).slice(0, 10);
-  }
+  keywords = keywords.filter((k) => !containsStopword(k.key)).slice(0, 10);
 
   const contexts = await fetchKeywordContexts(topic, keywords.map((k) => k.key), dateRange, publications);
   return keywords.map((k) => ({ ...k, context: contexts[k.key] }));
