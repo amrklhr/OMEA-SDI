@@ -7,7 +7,7 @@ import {
   Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, Check, List, MessageCircle, AlertTriangle, Plus, X, Lightbulb, ArrowUp, ArrowDown,
 } from "lucide-react";
 import {
-  fetchTopicData, fetchKeywordProminence, fetchContextBreakdown,
+  fetchTopicData, fetchKeywordProminence, fetchContextBreakdown, fetchSentimentImpressionBuckets,
   fetchSentimentDistribution, fetchArticleSample,
   fetchArticlesForKeyword, fetchArticlesForSection,
   fetchMonthlyKpiBreakdown, fetchBrandComparison, fetchPriorPeriodSummary,
@@ -1472,7 +1472,91 @@ function RevenueChart({ monthlyEmvByPublication, selectedPubs }) {
   );
 }
 
-function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo }) {
+function SentimentImpressionChart({ topic, dateRange, selectedPubs }) {
+  const [buckets, setBuckets] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!topic?.label) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchSentimentImpressionBuckets(topic.label, dateRange, selectedPubs)
+      .then((data) => { if (!cancelled) setBuckets(data); })
+      .catch((err) => { if (!cancelled) setError(err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [topic?.label, dateRange.from, dateRange.to, selectedPubs]);
+
+  // fill in every 0.1 bucket from -1.0 to 0.9 even if empty, so the x-axis
+  // stays evenly spaced and gaps are visually honest (zero, not missing)
+  const chartData = [];
+  for (let i = -10; i <= 9; i++) {
+    const start = Math.round(i) / 10;
+    const match = buckets.find((b) => Math.abs(b.bucketStart - start) < 0.01);
+    chartData.push({
+      bucket: start.toFixed(1),
+      count: match?.count || 0,
+      totalImpressions: match?.totalImpressions || 0,
+    });
+  }
+  const totalCount = chartData.reduce((s, b) => s + b.count, 0);
+
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Impressions by sentiment level</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        Gray bars are article count per 0.1 sentiment point (left axis); the line is total estimated
+        impressions at that sentiment level (right axis) — shows which sentiment range is actually
+        driving reach, not just which one has the most articles.
+      </div>
+      {error && <div className="mb-3 text-xs" style={{ color: NEG }}>{error}</div>}
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-10 text-sm" style={{ color: SUBTEXT }}>
+          <Loader2 size={16} className="animate-spin" /> Loading…
+        </div>
+      ) : totalCount === 0 ? (
+        <div className="py-6 text-sm" style={{ color: SUBTEXT }}>No articles found for this topic and date range.</div>
+      ) : (
+        <>
+          <ResponsiveContainer width="100%" height={260}>
+            <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+              <CartesianGrid stroke="#E3DDCE" vertical={false} />
+              <XAxis dataKey="bucket" tick={{ fontSize: 9, fill: SUBTEXT }} interval={1} angle={-45} textAnchor="end" height={50} />
+              <YAxis yAxisId="left" tick={{ fontSize: 10, fill: SUBTEXT }} allowDecimals={false} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+              <Tooltip
+                contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }}
+                labelStyle={{ color: INK }}
+                formatter={(value, name) => name === "Impressions" ? [fmtNum(value), name] : [value, name]}
+                labelFormatter={(label) => `Sentiment ${label}`}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar yAxisId="left" dataKey="count" name="Articles" fill="#8C8477" fillOpacity={0.2} radius={[2, 2, 0, 0]} />
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="totalImpressions"
+                stroke={INK}
+                strokeWidth={2.5}
+                dot={{ r: 3, fill: INK, strokeWidth: 0 }}
+                activeDot={{ r: 5 }}
+                name="Impressions"
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+          <StatsRow items={[
+            { label: "Total articles", value: fmtNum(totalCount) },
+            { label: "Total impressions", value: fmtNum(chartData.reduce((s, b) => s + b.totalImpressions, 0)) },
+          ]} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRange }) {
   const pubs = topic.publications.filter((p) => selectedPubs.includes(p.name));
   const volume = pubs.reduce((sum, p) => sum + p.articles, 0);
   const impressions = pubs.reduce((sum, p) => sum + p.impressions, 0);
@@ -1587,6 +1671,8 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo }) {
           { label: "Total impressions", value: fmtNum(computeStats(chartData.map((d) => d.impressions)).total) },
         ]} />
       </div>
+
+      <SentimentImpressionChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} />
 
       <RevenueChart monthlyEmvByPublication={topic.monthlyEmvByPublication} selectedPubs={selectedPubs} />
 
@@ -2740,7 +2826,7 @@ export default function OmeaDashboard() {
                   <>
                     <PublicationFilter allPubs={topic.publications} selected={selectedPubs} onChange={setSelectedPubs} />
                     {persona === "owner" ? (
-                      <MarketingOwnerView topic={topic} selectedPubs={selectedPubs} priorSummary={priorSummary} dateTo={dateTo} />
+                      <MarketingOwnerView topic={topic} selectedPubs={selectedPubs} priorSummary={priorSummary} dateTo={dateTo} dateRange={dateRange} />
                     ) : persona === "analyst" ? (
                       <DataAnalystView
                         topic={topic}

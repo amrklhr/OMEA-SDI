@@ -358,6 +358,36 @@ export async function fetchSentimentDistribution(topic, dateRange = {}, publicat
 }
 
 /**
+ * Article count and total impressions, bucketed every 0.1 sentiment point
+ * from -1.0 to 1.0 (20 buckets) — finer-grained than the 0.2 buckets used
+ * elsewhere, since this chart's whole point is spotting which narrow
+ * sentiment range punches above its article count in reach. Estimated
+ * Impressions is a formula of reach_tier and section_weight only (see How
+ * It Works), not sentiment, so any pattern here reflects which
+ * publications/sections happen to write at that sentiment level — a real
+ * finding, not a formula artifact like the ROI-sentiment relationship.
+ */
+export async function fetchSentimentImpressionBuckets(topic, dateRange = {}, publications = null) {
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange, publications),
+    aggs: {
+      buckets: {
+        histogram: { field: "sentiment_score", interval: 0.1, extended_bounds: { min: -1, max: 0.9 } },
+        aggs: { total_impressions: { sum: { field: "estimated_impressions" } } },
+      },
+    },
+  };
+  const data = await runQuery(body);
+  const buckets = data.aggregations?.buckets?.buckets || [];
+  return buckets.map((b) => ({
+    bucketStart: Math.round(b.key * 10) / 10, // avoid floating point noise like 0.30000000000000004
+    count: b.doc_count,
+    totalImpressions: b.total_impressions.value ?? 0,
+  }));
+}
+
+/**
  * A sample of individual articles with per-article fields — feeds the
  * sentiment-vs-ROI and word-count-vs-engagement scatter plots. One query
  * serves both charts since they need the same underlying article-level data.
