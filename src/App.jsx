@@ -1507,32 +1507,32 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo }) {
   const spikes = detectSpikes(chartData);
 
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex items-center justify-between">
-        <div className="text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Effectiveness</div>
-        <button
-          onClick={() => exportKpiSummaryCSV(topic, selectedPubs)}
-          className="flex items-center gap-1.5 rounded-sm border px-3 py-1.5 text-xs font-medium"
-          style={{ borderColor: "#D9D2C2", color: SUBTEXT, background: "#FBFAF6" }}
-        >
-          <Download size={13} /> Export summary CSV
-        </button>
-      </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <KpiCard icon={Newspaper} label="Coverage Volume" value={fmtNum(volume)} delta={d.volume} />
-        <KpiCard icon={Smile} label="Avg. Sentiment" value={(sentiment >= 0 ? "+" : "") + sentiment.toFixed(2)} tone={sentiment >= 0 ? "pos" : "neg"} delta={d.sentiment} />
-        <KpiCard icon={Eye} label="Est. Impressions" value={`${(impressions / 1_000_000).toFixed(1)}M`} delta={d.impressions} />
-        <KpiCard icon={TrendingUp} label="Engagement Rate" value={fmtPct(engagement)} delta={d.engagement} />
-      </div>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Effectiveness</div>
+          <button
+            onClick={() => exportKpiSummaryCSV(topic, selectedPubs)}
+            className="flex items-center gap-1.5 rounded-sm border px-3 py-1.5 text-xs font-medium"
+            style={{ borderColor: "#D9D2C2", color: SUBTEXT, background: "#FBFAF6" }}
+          >
+            <Download size={13} /> Export summary CSV
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <KpiCard icon={Newspaper} label="Coverage Volume" value={fmtNum(volume)} delta={d.volume} />
+          <KpiCard icon={Smile} label="Avg. Sentiment" value={(sentiment >= 0 ? "+" : "") + sentiment.toFixed(2)} tone={sentiment >= 0 ? "pos" : "neg"} delta={d.sentiment} />
+          <KpiCard icon={Eye} label="Est. Impressions" value={`${(impressions / 1_000_000).toFixed(1)}M`} delta={d.impressions} />
+          <KpiCard icon={TrendingUp} label="Engagement Rate" value={fmtPct(engagement)} delta={d.engagement} />
+        </div>
 
-      <div className="mt-4 mb-1 text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Efficiency</div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-        <KpiCard icon={MousePointerClick} label="Avg. CTR" value={fmtPct(topic.summary.ctr)} />
-        <KpiCard icon={DollarSign} label="Earned Media Value" value={`$${(emv / 1000).toFixed(1)}K`} tone="pos" delta={d.emv} />
-        <KpiCard icon={Target} label="ROI Index" value={fmtPct(roi)} tone={roi >= 0 ? "pos" : "neg"} delta={d.roi} />
+        <div className="mt-1 text-xs font-medium uppercase tracking-wide" style={{ color: SUBTEXT, letterSpacing: "0.08em" }}>Efficiency</div>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+          <KpiCard icon={MousePointerClick} label="Avg. CTR" value={fmtPct(topic.summary.ctr)} />
+          <KpiCard icon={DollarSign} label="Earned Media Value" value={`$${(emv / 1000).toFixed(1)}K`} tone="pos" delta={d.emv} />
+          <KpiCard icon={Target} label="ROI Index" value={fmtPct(roi)} tone={roi >= 0 ? "pos" : "neg"} delta={d.roi} />
+        </div>
       </div>
-
-      <InsightsPanel insights={generateInsights(topic, selectedPubs)} />
 
       <SpotlightCard spotlight={topic.spotlight} />
 
@@ -1580,6 +1580,8 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo }) {
       </div>
 
       <RevenueChart monthlyEmvByPublication={topic.monthlyEmvByPublication} selectedPubs={selectedPubs} />
+
+      <InsightsPanel insights={generateInsights(topic, selectedPubs)} />
     </div>
   );
 }
