@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, PieChart, Pie, Cell, Legend, ScatterChart, Scatter, ZAxis, AreaChart, Area,
+  BarChart, Bar, PieChart, Pie, Cell, Legend, ScatterChart, Scatter, ZAxis, AreaChart, Area, ComposedChart,
 } from "recharts";
 import {
   Newspaper, TrendingUp, Eye, MousePointerClick, DollarSign, Target, Smile, ChevronDown, ChevronUp, Search, Loader2, Trophy, TrendingDown, Download, Link2, Check, List, MessageCircle, AlertTriangle, Plus, X, Lightbulb, ArrowUp, ArrowDown,
@@ -314,11 +314,6 @@ function detectSpikes(data) {
   const std = Math.sqrt(variance);
   const threshold = mean + 1.5 * std;
   return new Set(data.filter((d) => d.v > threshold).map((d) => d.m));
-}
-
-function SpikeDot({ cx, cy, payload, spikes }) {
-  if (!spikes.has(payload.m)) return null;
-  return <circle cx={cx} cy={cy} r={5} fill={GOLD} stroke={INK} strokeWidth={1.5} />;
 }
 
 const DATASET_START = "2016-01-01";
@@ -1503,6 +1498,7 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo }) {
   const chartData = sortedMonths.map((m) => ({
     m,
     v: selectedPubs.reduce((sum, pubName) => sum + (topic.monthlyByPublication[pubName]?.[m] || 0), 0),
+    impressions: selectedPubs.reduce((sum, pubName) => sum + (topic.monthlyImpressionsByPublication?.[pubName]?.[m] || 0), 0),
   }));
   const spikes = detectSpikes(chartData);
 
@@ -1540,42 +1536,55 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo }) {
 
       <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
         <div className="mb-1 font-serif text-lg" style={{ color: INK }}>
-          Coverage volume over time
+          Coverage volume &amp; impressions over time
         </div>
         <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+          Gray bars are article count (left axis); the line is estimated impressions (right axis) —
+          shows whether rising coverage is actually translating into reach, or just more articles with
+          the same audience.{" "}
           {isFiltered
             ? `Showing ${selectedPubs.length} of ${topic.publications.length} selected channels.`
             : "Live data from your OpenSearch index."}
           {spikes.size > 0 && (
-            <span> Gold points mark statistically detected spikes (volume &gt; mean + 1.5&times;std dev): {[...spikes].join(", ")}.</span>
+            <span> Gold bars mark statistically detected coverage spikes (volume &gt; mean + 1.5&times;std dev): {[...spikes].join(", ")}.</span>
           )}
           {(dateTo === "" || dateTo >= "2019-06") && (
             <span style={{ color: NEG }}> Note: the June 2019 spike is a corpus-wide collection artifact, not a real coverage event.</span>
           )}
         </div>
-        <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+        <ResponsiveContainer width="100%" height={260}>
+          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
             <CartesianGrid stroke="#E3DDCE" vertical={false} />
             <XAxis dataKey="m" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(chartData.length / 8)} />
-            <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} />
+            <YAxis yAxisId="left" tick={{ fontSize: 10, fill: SUBTEXT }} />
+            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
             <Tooltip
               contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }}
               labelStyle={{ color: INK }}
+              formatter={(value, name) => name === "Impressions" ? [fmtNum(value), name] : [value, name]}
             />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar yAxisId="left" dataKey="v" name="Articles" radius={[2, 2, 0, 0]}>
+              {chartData.map((entry) => (
+                <Cell key={entry.m} fill={spikes.has(entry.m) ? GOLD : "#8C8477"} fillOpacity={spikes.has(entry.m) ? 0.9 : 0.2} />
+              ))}
+            </Bar>
             <Line
+              yAxisId="right"
               type="monotone"
-              dataKey="v"
+              dataKey="impressions"
               stroke={INK}
-              strokeWidth={2}
-              dot={(props) => <SpikeDot key={props.payload.m} {...props} spikes={spikes} />}
-              name="Articles"
+              strokeWidth={2.5}
+              dot={{ r: 3, fill: INK, strokeWidth: 0 }}
+              activeDot={{ r: 5 }}
+              name="Impressions"
             />
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
         <StatsRow items={[
-          { label: "Total", value: fmtNum(computeStats(chartData.map((d) => d.v)).total) },
+          { label: "Total articles", value: fmtNum(computeStats(chartData.map((d) => d.v)).total) },
           { label: "Avg / period", value: computeStats(chartData.map((d) => d.v)).avg.toFixed(1) },
-          { label: "Median / period", value: fmtNum(computeStats(chartData.map((d) => d.v)).median) },
+          { label: "Total impressions", value: fmtNum(computeStats(chartData.map((d) => d.impressions)).total) },
         ]} />
       </div>
 

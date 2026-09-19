@@ -270,7 +270,37 @@ export async function fetchMonthlyEmvByPublication(topic, dateRange = {}, interv
   return result;
 }
 
-/** Per-publication KPI breakdown — feeds the Data Analyst table. */
+/** Same shape as fetchMonthlyEmvByPublication but summing impressions instead of EMV — feeds the Coverage + Impressions combo chart. */
+export async function fetchMonthlyImpressionsByPublication(topic, dateRange = {}, interval = "month") {
+  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange),
+    aggs: {
+      by_publication: {
+        terms: { field: "publication", size: 30 },
+        aggs: {
+          periods: {
+            date_histogram: { field: "date", calendar_interval: interval, format },
+            aggs: { total_impressions: { sum: { field: "estimated_impressions" } } },
+          },
+        },
+      },
+    },
+  };
+  const data = await runQuery(body);
+  const result = {};
+  for (const pubBucket of data.aggregations.by_publication.buckets) {
+    const periods = {};
+    for (const periodBucket of pubBucket.periods.buckets) {
+      periods[periodBucket.key_as_string] = periodBucket.total_impressions.value ?? 0;
+    }
+    result[pubBucket.key] = periods;
+  }
+  return result;
+}
+
+
 export async function fetchPublicationBreakdown(topic, dateRange = {}) {
   const body = {
     size: 0,
@@ -687,14 +717,15 @@ export async function fetchAllTopicArticles(topic, dateRange = {}, publications 
 
 /** Fetches everything a topic search needs, in parallel (keywords/contexts load separately). */
 export async function fetchTopicData(topic, dateRange = {}, interval = "month") {
-  const [summary, monthlyByPublication, monthlyEmvByPublication, publications, spotlight] = await Promise.all([
+  const [summary, monthlyByPublication, monthlyEmvByPublication, monthlyImpressionsByPublication, publications, spotlight] = await Promise.all([
     fetchSummary(topic, dateRange),
     fetchMonthlyVolumeByPublication(topic, dateRange, interval),
     fetchMonthlyEmvByPublication(topic, dateRange, interval),
+    fetchMonthlyImpressionsByPublication(topic, dateRange, interval),
     fetchPublicationBreakdown(topic, dateRange),
     fetchPerformanceSpotlight(topic, dateRange),
   ]);
-  return { label: topic, summary, monthlyByPublication, monthlyEmvByPublication, publications, spotlight };
+  return { label: topic, summary, monthlyByPublication, monthlyEmvByPublication, monthlyImpressionsByPublication, publications, spotlight };
 }
 
 /**
