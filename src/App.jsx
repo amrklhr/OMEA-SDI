@@ -757,16 +757,16 @@ function WordCloudPanel({ topic, dateRange, selectedPubs, onPivot }) {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!topic?.label) return;
+    if (!topic) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchWordCloudTerms(topic.label, dateRange, selectedPubs, 25)
+    fetchWordCloudTerms(topic, dateRange, selectedPubs, 25)
       .then((data) => { if (!cancelled) setWords(data); })
       .catch((err) => { if (!cancelled) setError(err.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [topic?.label, dateRange.from, dateRange.to, selectedPubs]);
+  }, [topic, dateRange.from, dateRange.to, selectedPubs]);
 
   // tag each word with a size/color tier by rank before reordering, so
   // visual weight still reflects true prominence after the layout mixes
