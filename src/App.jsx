@@ -1652,24 +1652,25 @@ function PolarityEngagementCharts({ topic, dateRange, selectedPubs, interval }) 
   return (
     <>
       <PolarityComboChart
-        title="Engagement vs. average positive sentiment"
-        description="Bars are average engagement rate among only the positive-sentiment articles each period (left axis); the line is how positive that positive coverage actually is (right axis, 0 to 1). Shows whether stronger positive sentiment comes with more or less engagement."
+        title="Sentiment vs. engagement — positive coverage"
+        description="Bars are how positive the positive-sentiment articles actually are each period (left axis, 0 to 1); the line is their average engagement rate (right axis). Shows whether stronger positive sentiment comes with more or less engagement."
         data={data} loading={loading} error={error}
-        barKey="avgPositiveEngagement" barName="Engagement Rate"
-        lineKey="avgPositive" lineName="Avg. positive sentiment" lineColor={POS} lineDomain={[0, 1]}
+        sentimentKey="avgPositive" sentimentName="Avg. positive sentiment" barColor={POS} sentimentDomain={[0, 1]}
+        engagementKey="avgPositiveEngagement" engagementName="Engagement Rate"
       />
       <PolarityComboChart
-        title="Engagement vs. average negative sentiment"
-        description="Bars are average engagement rate among only the negative-sentiment articles each period (left axis); the line is how negative that negative coverage actually is (right axis, −1 to 0). Shows whether stronger negative sentiment comes with more or less engagement."
+        title="Sentiment vs. engagement — negative coverage"
+        description="Bars are how negative the negative-sentiment articles actually are each period (left axis, −1 to 0); the line is their average engagement rate (right axis). Shows whether stronger negative sentiment comes with more or less engagement."
         data={data} loading={loading} error={error}
-        barKey="avgNegativeEngagement" barName="Engagement Rate"
-        lineKey="avgNegative" lineName="Avg. negative sentiment" lineColor={NEG} lineDomain={[-1, 0]}
+        sentimentKey="avgNegative" sentimentName="Avg. negative sentiment" barColor={NEG} sentimentDomain={[-1, 0]}
+        engagementKey="avgNegativeEngagement" engagementName="Engagement Rate"
       />
+      <PositiveNegativeVolumeChart data={data} loading={loading} error={error} />
     </>
   );
 }
 
-function PolarityComboChart({ title, description, data, loading, error, barKey, barName, lineKey, lineName, lineColor, lineDomain }) {
+function PolarityComboChart({ title, description, data, loading, error, sentimentKey, sentimentName, barColor, sentimentDomain, engagementKey, engagementName }) {
   return (
     <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
       <div className="mb-1 font-serif text-lg" style={{ color: INK }}>{title}</div>
@@ -1686,24 +1687,24 @@ function PolarityComboChart({ title, description, data, loading, error, barKey, 
           <ComposedChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
             <CartesianGrid stroke="#E3DDCE" vertical={false} />
             <XAxis dataKey="period" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(data.length / 8)} />
-            <YAxis yAxisId="left" tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => fmtPct(v)} />
-            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: SUBTEXT }} domain={lineDomain} />
+            <YAxis yAxisId="left" tick={{ fontSize: 10, fill: SUBTEXT }} domain={sentimentDomain} />
+            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => fmtPct(v)} />
             <Tooltip
               contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }}
               labelStyle={{ color: INK }}
-              formatter={(value, name) => name === barName ? [fmtPct(value), name] : [(value >= 0 ? "+" : "") + value.toFixed(2), name]}
+              formatter={(value, name) => name === engagementName ? [fmtPct(value), name] : [(value >= 0 ? "+" : "") + value.toFixed(2), name]}
             />
             <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar yAxisId="left" dataKey={barKey} name={barName} fill="#8C8477" fillOpacity={0.3} radius={[2, 2, 0, 0]} />
+            <Bar yAxisId="left" dataKey={sentimentKey} name={sentimentName} fill={barColor} fillOpacity={0.5} radius={[2, 2, 0, 0]} />
             <Line
               yAxisId="right"
               type="monotone"
-              dataKey={lineKey}
-              stroke={lineColor}
+              dataKey={engagementKey}
+              stroke={INK}
               strokeWidth={2.5}
-              dot={{ r: 3, fill: lineColor, strokeWidth: 0 }}
+              dot={{ r: 3, fill: INK, strokeWidth: 0 }}
               activeDot={{ r: 5 }}
-              name={lineName}
+              name={engagementName}
             />
           </ComposedChart>
         </ResponsiveContainer>
@@ -1711,6 +1712,41 @@ function PolarityComboChart({ title, description, data, loading, error, barKey, 
     </div>
   );
 }
+
+function PositiveNegativeVolumeChart({ data, loading, error }) {
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Positive vs. negative article volume</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        Stacked bar per period: the number of positive-sentiment articles (green) and the number of
+        negative-sentiment articles (red). Shows how the balance of favorable vs. unfavorable coverage
+        shifts over time, independent of sentiment intensity or engagement.
+      </div>
+      {error && <div className="mb-3 text-xs" style={{ color: NEG }}>{error}</div>}
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-10 text-sm" style={{ color: SUBTEXT }}>
+          <Loader2 size={16} className="animate-spin" /> Loading…
+        </div>
+      ) : data.length === 0 ? (
+        <div className="py-6 text-sm" style={{ color: SUBTEXT }}>No data found for this topic and date range.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+            <CartesianGrid stroke="#E3DDCE" vertical={false} />
+            <XAxis dataKey="period" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(data.length / 8)} />
+            <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} allowDecimals={false} />
+            <Tooltip contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} labelStyle={{ color: INK }} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="positiveCount" name="Positive articles" stackId="polarity" fill={POS} />
+            <Bar dataKey="negativeCount" name="Negative articles" stackId="polarity" fill={NEG} radius={[2, 2, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+
 
 function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRange, interval }) {
   const pubs = topic.publications.filter((p) => selectedPubs.includes(p.name));
