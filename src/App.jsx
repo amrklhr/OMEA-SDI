@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import {
   fetchTopicData, fetchKeywordProminence, fetchContextBreakdown, fetchSentimentImpressionBuckets, fetchWordCloudTerms,
+  fetchMonthlyEngagementSentiment, fetchMonthlyPositiveNegativeSentiment,
   fetchSentimentDistribution, fetchArticleSample,
   fetchArticlesForKeyword, fetchArticlesForSection,
   fetchMonthlyKpiBreakdown, fetchBrandComparison, fetchPriorPeriodSummary,
@@ -304,16 +305,6 @@ function InsightsPanel({ insights }) {
       </div>
     </div>
   );
-}
-
-function detectSpikes(data) {
-  if (data.length < 3) return new Set();
-  const values = data.map((d) => d.v);
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
-  const std = Math.sqrt(variance);
-  const threshold = mean + 1.5 * std;
-  return new Set(data.filter((d) => d.v > threshold).map((d) => d.m));
 }
 
 const DATASET_START = "2016-01-01";
@@ -1641,7 +1632,124 @@ function SentimentImpressionChart({ topic, dateRange, selectedPubs }) {
   );
 }
 
-function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRange }) {
+function EngagementSentimentChart({ topic, dateRange, selectedPubs, interval }) {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!topic?.label) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchMonthlyEngagementSentiment(topic.label, dateRange, interval, selectedPubs)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((err) => { if (!cancelled) setError(err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [topic?.label, dateRange.from, dateRange.to, interval, selectedPubs]);
+
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Engagement &amp; sentiment over time</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        Gray bars are average engagement rate per period (left axis); the line is average sentiment
+        (right axis) — shows whether audience engagement tracks how positively or negatively a topic
+        is covered, or moves independently of it.
+      </div>
+      {error && <div className="mb-3 text-xs" style={{ color: NEG }}>{error}</div>}
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-10 text-sm" style={{ color: SUBTEXT }}>
+          <Loader2 size={16} className="animate-spin" /> Loading…
+        </div>
+      ) : data.length === 0 ? (
+        <div className="py-6 text-sm" style={{ color: SUBTEXT }}>No data found for this topic and date range.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={260}>
+          <ComposedChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+            <CartesianGrid stroke="#E3DDCE" vertical={false} />
+            <XAxis dataKey="period" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(data.length / 8)} />
+            <YAxis yAxisId="left" tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => fmtPct(v)} />
+            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: SUBTEXT }} domain={[-1, 1]} />
+            <Tooltip
+              contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }}
+              labelStyle={{ color: INK }}
+              formatter={(value, name) => name === "Engagement Rate" ? [fmtPct(value), name] : [(value >= 0 ? "+" : "") + value.toFixed(2), name]}
+            />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar yAxisId="left" dataKey="avgEngagement" name="Engagement Rate" fill="#8C8477" fillOpacity={0.3} radius={[2, 2, 0, 0]} />
+            <Line
+              yAxisId="right"
+              type="monotone"
+              dataKey="avgSentiment"
+              stroke={INK}
+              strokeWidth={2.5}
+              dot={{ r: 3, fill: INK, strokeWidth: 0 }}
+              activeDot={{ r: 5 }}
+              name="Sentiment"
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function PositiveNegativeSentimentChart({ topic, dateRange, selectedPubs, interval }) {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!topic?.label) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchMonthlyPositiveNegativeSentiment(topic.label, dateRange, interval, selectedPubs)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((err) => { if (!cancelled) setError(err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [topic?.label, dateRange.from, dateRange.to, interval, selectedPubs]);
+
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Positive vs. negative sentiment over time</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        Two separate averages per period: the average sentiment among only the positive-sentiment
+        articles, and the average among only the negative-sentiment articles. A period can look
+        moderate on an overall average while actually containing sharply polarized coverage — this
+        splits the two apart instead of blending them into one number.
+      </div>
+      {error && <div className="mb-3 text-xs" style={{ color: NEG }}>{error}</div>}
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-10 text-sm" style={{ color: SUBTEXT }}>
+          <Loader2 size={16} className="animate-spin" /> Loading…
+        </div>
+      ) : data.length === 0 ? (
+        <div className="py-6 text-sm" style={{ color: SUBTEXT }}>No data found for this topic and date range.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+            <CartesianGrid stroke="#E3DDCE" vertical={false} />
+            <XAxis dataKey="period" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(data.length / 8)} />
+            <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} domain={[-1, 1]} />
+            <Tooltip
+              contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }}
+              labelStyle={{ color: INK }}
+              formatter={(value, name) => [(value >= 0 ? "+" : "") + value.toFixed(2), name]}
+            />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="avgPositive" name="Avg. positive sentiment" fill={POS} radius={[2, 2, 0, 0]} />
+            <Bar dataKey="avgNegative" name="Avg. negative sentiment" fill={NEG} radius={[0, 0, 2, 2]} />
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRange, interval }) {
   const pubs = topic.publications.filter((p) => selectedPubs.includes(p.name));
   const volume = pubs.reduce((sum, p) => sum + p.articles, 0);
   const impressions = pubs.reduce((sum, p) => sum + p.impressions, 0);
@@ -1650,7 +1758,6 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRan
   const sentiment = wAvg("sentiment");
   const engagement = wAvg("engagement");
   const roi = wAvg("roi");
-  const isFiltered = selectedPubs.length < topic.publications.length;
 
   // compute % change vs prior period for each KPI
   const pct = (curr, prev) => (prev && prev !== 0 ? ((curr - prev) / Math.abs(prev)) * 100 : null);
@@ -1662,14 +1769,6 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRan
     emv:        pct(emv,        priorSummary.emv),
     roi:        pct(roi,        priorSummary.roi),
   } : {};
-
-  const sortedMonths = combinedMonths(topic.monthlyByPublication, selectedPubs);
-  const chartData = sortedMonths.map((m) => ({
-    m,
-    v: selectedPubs.reduce((sum, pubName) => sum + (topic.monthlyByPublication[pubName]?.[m] || 0), 0),
-    impressions: selectedPubs.reduce((sum, pubName) => sum + (topic.monthlyImpressionsByPublication?.[pubName]?.[m] || 0), 0),
-  }));
-  const spikes = detectSpikes(chartData);
 
   return (
     <div className="flex flex-col gap-6">
@@ -1703,59 +1802,9 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRan
 
       <MediaSharePie publications={topic.publications} selectedPubs={selectedPubs} />
 
-      <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
-        <div className="mb-1 font-serif text-lg" style={{ color: INK }}>
-          Coverage volume &amp; impressions over time
-        </div>
-        <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-          Gray bars are article count (left axis); the line is estimated impressions (right axis) —
-          shows whether rising coverage is actually translating into reach, or just more articles with
-          the same audience.{" "}
-          {isFiltered
-            ? `Showing ${selectedPubs.length} of ${topic.publications.length} selected channels.`
-            : "Live data from your OpenSearch index."}
-          {spikes.size > 0 && (
-            <span> Gold bars mark statistically detected coverage spikes (volume &gt; mean + 1.5&times;std dev): {[...spikes].join(", ")}.</span>
-          )}
-          {(dateTo === "" || dateTo >= "2019-06") && (
-            <span style={{ color: NEG }}> Note: the June 2019 spike is a corpus-wide collection artifact, not a real coverage event.</span>
-          )}
-        </div>
-        <ResponsiveContainer width="100%" height={260}>
-          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
-            <CartesianGrid stroke="#E3DDCE" vertical={false} />
-            <XAxis dataKey="m" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(chartData.length / 8)} />
-            <YAxis yAxisId="left" tick={{ fontSize: 10, fill: SUBTEXT }} />
-            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
-            <Tooltip
-              contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }}
-              labelStyle={{ color: INK }}
-              formatter={(value, name) => name === "Impressions" ? [fmtNum(value), name] : [value, name]}
-            />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar yAxisId="left" dataKey="v" name="Articles" radius={[2, 2, 0, 0]}>
-              {chartData.map((entry) => (
-                <Cell key={entry.m} fill={spikes.has(entry.m) ? GOLD : "#8C8477"} fillOpacity={spikes.has(entry.m) ? 0.9 : 0.2} />
-              ))}
-            </Bar>
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="impressions"
-              stroke={INK}
-              strokeWidth={2.5}
-              dot={{ r: 3, fill: INK, strokeWidth: 0 }}
-              activeDot={{ r: 5 }}
-              name="Impressions"
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
-        <StatsRow items={[
-          { label: "Total articles", value: fmtNum(computeStats(chartData.map((d) => d.v)).total) },
-          { label: "Avg / period", value: computeStats(chartData.map((d) => d.v)).avg.toFixed(1) },
-          { label: "Total impressions", value: fmtNum(computeStats(chartData.map((d) => d.impressions)).total) },
-        ]} />
-      </div>
+      <EngagementSentimentChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} interval={interval} />
+
+      <PositiveNegativeSentimentChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} interval={interval} />
 
       <SentimentImpressionChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} />
 
@@ -2463,16 +2512,6 @@ function MethodologyView() {
         </div>
       </div>
 
-      <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
-        <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Spike detection</div>
-        <div className="text-sm" style={{ color: "#3A4150" }}>
-          A period is flagged as a statistical spike when its volume exceeds the mean plus 1.5
-          standard deviations across the currently displayed periods — a simple, explainable
-          statistical rule, not a machine-learning anomaly detector. This threshold is computed
-          fresh for whatever topic, date range, and channels are currently selected.
-        </div>
-      </div>
-
       <div>
         <div className="mb-3 font-serif text-lg" style={{ color: INK }}>Best &amp; Worst titles</div>
         <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
@@ -2911,7 +2950,7 @@ export default function OmeaDashboard() {
                   <>
                     <PublicationFilter allPubs={topic.publications} selected={selectedPubs} onChange={setSelectedPubs} />
                     {persona === "owner" ? (
-                      <MarketingOwnerView topic={topic} selectedPubs={selectedPubs} priorSummary={priorSummary} dateTo={dateTo} dateRange={dateRange} />
+                      <MarketingOwnerView topic={topic} selectedPubs={selectedPubs} priorSummary={priorSummary} dateTo={dateTo} dateRange={dateRange} interval={interval} />
                     ) : persona === "analyst" ? (
                       <DataAnalystView
                         topic={topic}

@@ -387,6 +387,69 @@ export async function fetchSentimentImpressionBuckets(topic, dateRange = {}, pub
   }));
 }
 
+/** Average engagement rate and average sentiment per period — feeds the Engagement vs. Sentiment combo chart. */
+export async function fetchMonthlyEngagementSentiment(topic, dateRange = {}, interval = "month", publications = null) {
+  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange, publications),
+    aggs: {
+      periods: {
+        date_histogram: { field: "date", calendar_interval: interval, format },
+        aggs: {
+          avg_engagement: { avg: { field: "engagement_rate" } },
+          avg_sentiment: { avg: { field: "sentiment_score" } },
+        },
+      },
+    },
+  };
+  const data = await runQuery(body);
+  const buckets = data.aggregations?.periods?.buckets || [];
+  return buckets.map((b) => ({
+    period: b.key_as_string,
+    avgEngagement: b.avg_engagement.value ?? 0,
+    avgSentiment: b.avg_sentiment.value ?? 0,
+  }));
+}
+
+/**
+ * Average positive sentiment and average negative sentiment per period,
+ * computed separately — not one overall average. A period can have a
+ * moderate overall average while actually containing strongly polarized
+ * coverage; splitting positive and negative apart surfaces that.
+ */
+export async function fetchMonthlyPositiveNegativeSentiment(topic, dateRange = {}, interval = "month", publications = null) {
+  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
+  const body = {
+    size: 0,
+    query: topicFilter(topic, dateRange, publications),
+    aggs: {
+      periods: {
+        date_histogram: { field: "date", calendar_interval: interval, format },
+        aggs: {
+          positive: {
+            filter: { range: { sentiment_score: { gt: 0 } } },
+            aggs: { avg_sentiment: { avg: { field: "sentiment_score" } } },
+          },
+          negative: {
+            filter: { range: { sentiment_score: { lt: 0 } } },
+            aggs: { avg_sentiment: { avg: { field: "sentiment_score" } } },
+          },
+        },
+      },
+    },
+  };
+  const data = await runQuery(body);
+  const buckets = data.aggregations?.periods?.buckets || [];
+  return buckets.map((b) => ({
+    period: b.key_as_string,
+    avgPositive: b.positive.avg_sentiment.value ?? 0,
+    avgNegative: b.negative.avg_sentiment.value ?? 0,
+    positiveCount: b.positive.doc_count,
+    negativeCount: b.negative.doc_count,
+  }));
+}
+
 /**
  * A sample of individual articles with per-article fields — feeds the
  * sentiment-vs-ROI and word-count-vs-engagement scatter plots. One query
