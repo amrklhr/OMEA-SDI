@@ -1511,6 +1511,86 @@ function TitleRankingTable({ title, articles, formatMetric, tone }) {
   );
 }
 
+// documented assumption constant — relative assumed audience size per
+// publication, 3-10 scale, used as the base multiplier in the Estimated
+// Impressions formula. Not a measured circulation figure.
+const REACH_TIER = {
+  "Reuters": 10, "Business Insider": 8, "TMZ": 7,
+  "Vice": 6, "Vice News": 6, "Vox": 6, "Hyperallergic": 3,
+};
+
+function ReachByPublicationChart({ topic, selectedPubs }) {
+  const rows = topic.publications
+    .filter((p) => selectedPubs.includes(p.name))
+    .map((p) => ({ name: p.name, reach: REACH_TIER[p.name] ?? 0 }))
+    .sort((a, b) => b.reach - a.reach);
+
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Reach by publication</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        Reach tier is a documented assumption constant, on a 3-10 relative scale, representing each
+        publication's assumed audience size — not a measured circulation or traffic figure. It is the
+        base multiplier behind Estimated Impressions (reach_tier &times; 1,000 &times; section_weight).
+      </div>
+      <ResponsiveContainer width="100%" height={Math.max(120, rows.length * 42)}>
+        <BarChart data={rows} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 0 }}>
+          <CartesianGrid stroke="#E3DDCE" horizontal={false} />
+          <XAxis type="number" domain={[0, 10]} tick={{ fontSize: 10, fill: SUBTEXT }} />
+          <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: INK }} width={120} />
+          <Tooltip formatter={(v) => [v, "Reach tier"]} contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} />
+          <Bar dataKey="reach" radius={[0, 2, 2, 0]}>
+            {rows.map((r) => <Cell key={r.name} fill={colorFor(r.name, 0)} />)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function EarnedVsPaidChart({ topic, selectedPubs }) {
+  const sortedMonths = combinedMonths(topic.monthlyEmvByPublication, selectedPubs);
+  const chartData = sortedMonths.map((m) => {
+    const emv = selectedPubs.reduce((sum, pubName) => sum + (topic.monthlyEmvByPublication[pubName]?.[m] || 0), 0);
+    const impressions = selectedPubs.reduce((sum, pubName) => sum + (topic.monthlyImpressionsByPublication?.[pubName]?.[m] || 0), 0);
+    const paidCost = (impressions * 15) / 1000; // $15 CPM benchmark
+    return { m, emv, paidCost };
+  });
+  const totalEmv = chartData.reduce((s, d) => s + d.emv, 0);
+  const totalPaidCost = chartData.reduce((s, d) => s + d.paidCost, 0);
+
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Earned media value vs. paid media cost</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        Paid Cost is what buying this same reach as paid media would cost, at a $15 CPM benchmark
+        (impressions &times; $15 / 1,000). This is the same paid_cost used inside the ROI Index ratio —
+        shown here as its own dollar figure instead of compressed into a single number, so you can see
+        which side is actually driving the ratio.
+      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        <BarChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+          <CartesianGrid stroke="#E3DDCE" vertical={false} />
+          <XAxis dataKey="m" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(chartData.length / 8)} />
+          <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} />
+          <Tooltip
+            formatter={(v, name) => [`$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, name]}
+            contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }}
+          />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Bar dataKey="emv" name="Earned Media Value" fill={POS} />
+          <Bar dataKey="paidCost" name="Paid Media Cost (equiv.)" fill="#8C8477" />
+        </BarChart>
+      </ResponsiveContainer>
+      <StatsRow items={[
+        { label: "Total EMV", value: fmtMoney(totalEmv) },
+        { label: "Total paid-equiv. cost", value: fmtMoney(totalPaidCost) },
+        { label: "Net (EMV − paid cost)", value: fmtMoney(totalEmv - totalPaidCost) },
+      ]} />
+    </div>
+  );
+}
+
 function RevenueChart({ monthlyEmvByPublication, selectedPubs }) {
   const sortedMonths = combinedMonths(monthlyEmvByPublication, selectedPubs);
   const chartData = sortedMonths.map((m) => ({
@@ -1846,11 +1926,15 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRan
 
       <MediaSharePie publications={topic.publications} selectedPubs={selectedPubs} />
 
+      <ReachByPublicationChart topic={topic} selectedPubs={selectedPubs} />
+
       <PositiveNegativeVolumeChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} interval={interval} />
 
       <SentimentImpressionChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} />
 
       <RevenueChart monthlyEmvByPublication={topic.monthlyEmvByPublication} selectedPubs={selectedPubs} />
+
+      <EarnedVsPaidChart topic={topic} selectedPubs={selectedPubs} />
 
       <InsightsPanel insights={generateInsights(topic, selectedPubs)} />
     </div>
