@@ -1591,6 +1591,107 @@ function EarnedVsPaidChart({ topic, selectedPubs }) {
   );
 }
 
+function CostRevenueTooltip({ active, payload, label }) {
+  if (!active || !payload || payload.length === 0) return null;
+  const get = (key) => payload.find((p) => p.dataKey === key)?.value;
+  const revenue = get("revenue"), cost = get("cost"), impressions = get("impressions");
+  return (
+    <div style={{ background: "#FFFFFF", border: "1px solid #D9D2C2", borderRadius: 2, padding: "8px 10px", fontSize: 12 }}>
+      <div style={{ color: INK, marginBottom: 4, fontWeight: 600 }}>{label}</div>
+      {impressions !== undefined && <div style={{ color: SUBTEXT }}>Reach: {fmtNum(impressions)}</div>}
+      {revenue !== undefined && <div style={{ color: POS }}>Revenue: {fmtMoney(revenue)}</div>}
+      {cost !== undefined && <div style={{ color: NEG }}>Cost: {fmtMoney(cost)}</div>}
+    </div>
+  );
+}
+
+function CostRevenueReachChart({ topic, selectedPubs }) {
+  const [pubFilter, setPubFilter] = useState("all"); // "all" | a single publication name
+  const activePubs = pubFilter === "all" ? selectedPubs : [pubFilter];
+
+  const sortedMonths = combinedMonths(topic.monthlyEmvByPublication, activePubs);
+  const chartData = sortedMonths.map((m) => {
+    const revenue = activePubs.reduce((s, p) => s + (topic.monthlyEmvByPublication[p]?.[m] || 0), 0);
+    const impressions = activePubs.reduce((s, p) => s + (topic.monthlyImpressionsByPublication?.[p]?.[m] || 0), 0);
+    const cost = (impressions * 15) / 1000; // $15 CPM benchmark
+    return {
+      m, revenue, cost, impressions,
+      base: Math.min(revenue, cost),
+      posDiff: revenue > cost ? revenue - cost : 0, // revenue ahead — shaded green
+      negDiff: cost > revenue ? cost - revenue : 0, // cost ahead — shaded red
+    };
+  });
+
+  return (
+    <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Cost, revenue &amp; reach over time</div>
+      <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
+        Gray bars are reach (estimated impressions, left axis). The green line is revenue (EMV) and the
+        red line is the paid-media-equivalent cost (both right axis) — the band between them is shaded
+        green where revenue is ahead and red where cost is ahead, so you can see which side is winning
+        at a glance instead of reading two lines separately.
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
+        <span className="text-xs" style={{ color: SUBTEXT }}>Publication:</span>
+        <button
+          onClick={() => setPubFilter("all")}
+          className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+          style={{
+            borderColor: pubFilter === "all" ? INK : "#D9D2C2",
+            background: pubFilter === "all" ? INK : "transparent",
+            color: pubFilter === "all" ? PAPER : SUBTEXT,
+          }}
+        >
+          All
+        </button>
+        {topic.publications.map((p) => (
+          <button
+            key={p.name}
+            onClick={() => setPubFilter(p.name)}
+            className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+            style={{
+              borderColor: pubFilter === p.name ? INK : "#D9D2C2",
+              background: pubFilter === p.name ? INK : "transparent",
+              color: pubFilter === p.name ? PAPER : SUBTEXT,
+            }}
+          >
+            {p.name}
+          </button>
+        ))}
+      </div>
+
+      {chartData.length === 0 ? (
+        <div className="py-6 text-sm" style={{ color: SUBTEXT }}>No data found for this topic and publication.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={300}>
+          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+            <CartesianGrid stroke="#E3DDCE" vertical={false} />
+            <XAxis dataKey="m" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(chartData.length / 8)} />
+            <YAxis yAxisId="left" tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} />
+            <Tooltip content={<CostRevenueTooltip />} />
+            <Legend
+              wrapperStyle={{ fontSize: 11 }}
+              payload={[
+                { value: "Reach (Impressions)", type: "rect", color: "#8C8477" },
+                { value: "Revenue (EMV)", type: "line", color: POS },
+                { value: "Cost (paid-media equiv.)", type: "line", color: NEG },
+              ]}
+            />
+            <Bar yAxisId="left" dataKey="impressions" fill="#8C8477" fillOpacity={0.25} radius={[2, 2, 0, 0]} />
+            <Area yAxisId="right" dataKey="base" stackId="band" stroke="none" fill="transparent" />
+            <Area yAxisId="right" dataKey="posDiff" stackId="band" stroke="none" fill={POS} fillOpacity={0.18} />
+            <Area yAxisId="right" dataKey="negDiff" stackId="band" stroke="none" fill={NEG} fillOpacity={0.18} />
+            <Line yAxisId="right" type="monotone" dataKey="revenue" stroke={POS} strokeWidth={2.5} dot={{ r: 3, fill: POS, strokeWidth: 0 }} activeDot={{ r: 5 }} />
+            <Line yAxisId="right" type="monotone" dataKey="cost" stroke={NEG} strokeWidth={2.5} dot={{ r: 3, fill: NEG, strokeWidth: 0 }} activeDot={{ r: 5 }} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
 function RevenueChart({ monthlyEmvByPublication, selectedPubs }) {
   const sortedMonths = combinedMonths(monthlyEmvByPublication, selectedPubs);
   const chartData = sortedMonths.map((m) => ({
@@ -1935,6 +2036,8 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRan
       <RevenueChart monthlyEmvByPublication={topic.monthlyEmvByPublication} selectedPubs={selectedPubs} />
 
       <EarnedVsPaidChart topic={topic} selectedPubs={selectedPubs} />
+
+      <CostRevenueReachChart topic={topic} selectedPubs={selectedPubs} />
 
       <InsightsPanel insights={generateInsights(topic, selectedPubs)} />
     </div>
