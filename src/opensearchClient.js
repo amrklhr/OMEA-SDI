@@ -387,31 +387,6 @@ export async function fetchSentimentImpressionBuckets(topic, dateRange = {}, pub
   }));
 }
 
-/** Average engagement rate and average sentiment per period — feeds the Engagement vs. Sentiment combo chart. */
-export async function fetchMonthlyEngagementSentiment(topic, dateRange = {}, interval = "month", publications = null) {
-  const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
-  const body = {
-    size: 0,
-    query: topicFilter(topic, dateRange, publications),
-    aggs: {
-      periods: {
-        date_histogram: { field: "date", calendar_interval: interval, format },
-        aggs: {
-          avg_engagement: { avg: { field: "engagement_rate" } },
-          avg_sentiment: { avg: { field: "sentiment_score" } },
-        },
-      },
-    },
-  };
-  const data = await runQuery(body);
-  const buckets = data.aggregations?.periods?.buckets || [];
-  return buckets.map((b) => ({
-    period: b.key_as_string,
-    avgEngagement: b.avg_engagement.value ?? 0,
-    avgSentiment: b.avg_sentiment.value ?? 0,
-  }));
-}
-
 /**
  * Per period, split by sentiment polarity: average sentiment and average
  * engagement rate among only the positive-sentiment articles, and the same
