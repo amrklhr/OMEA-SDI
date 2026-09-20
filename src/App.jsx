@@ -1665,7 +1665,7 @@ function PolarityEngagementCharts({ topic, dateRange, selectedPubs, interval }) 
         sentimentKey="avgNegative" sentimentName="Avg. negative sentiment" barColor={NEG} sentimentDomain={[-1, 0]}
         engagementKey="avgNegativeEngagement" engagementName="Engagement Rate"
       />
-      <PositiveNegativeVolumeChart data={data} loading={loading} error={error} />
+      <PositiveNegativeVolumeChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} interval={interval} />
     </>
   );
 }
@@ -1713,22 +1713,98 @@ function PolarityComboChart({ title, description, data, loading, error, sentimen
   );
 }
 
-function PositiveNegativeVolumeChart({ data, loading, error }) {
+function PositiveNegativeVolumeChart({ topic, dateRange, selectedPubs, interval }) {
+  const [pubFilter, setPubFilter] = useState("all"); // "all" | a single publication name
+  const [sentimentFilter, setSentimentFilter] = useState("all"); // all | positive | negative
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!topic?.label) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const pubs = pubFilter === "all" ? selectedPubs : [pubFilter];
+    fetchMonthlyPositiveNegativeSentiment(topic.label, dateRange, interval, pubs)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((err) => { if (!cancelled) setError(err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [topic?.label, dateRange.from, dateRange.to, interval, selectedPubs, pubFilter]);
+
+  const showPositive = sentimentFilter === "all" || sentimentFilter === "positive";
+  const showNegative = sentimentFilter === "all" || sentimentFilter === "negative";
+  const stacked = sentimentFilter === "all";
+
   return (
     <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
       <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Positive vs. negative article volume</div>
       <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-        Stacked bar per period: the number of positive-sentiment articles (green) and the number of
-        negative-sentiment articles (red). Shows how the balance of favorable vs. unfavorable coverage
-        shifts over time, independent of sentiment intensity or engagement.
+        The number of positive-sentiment articles (green) and negative-sentiment articles (red) per
+        period. Selecting "All" for sentiment shows them stacked; picking one shows it alone. Shows how
+        the balance of favorable vs. unfavorable coverage shifts over time, independent of sentiment
+        intensity or engagement.
       </div>
+
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <span className="text-xs" style={{ color: SUBTEXT }}>Publication:</span>
+        <button
+          onClick={() => setPubFilter("all")}
+          className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+          style={{
+            borderColor: pubFilter === "all" ? INK : "#D9D2C2",
+            background: pubFilter === "all" ? INK : "transparent",
+            color: pubFilter === "all" ? PAPER : SUBTEXT,
+          }}
+        >
+          All
+        </button>
+        {topic.publications.map((p) => (
+          <button
+            key={p.name}
+            onClick={() => setPubFilter(p.name)}
+            className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+            style={{
+              borderColor: pubFilter === p.name ? INK : "#D9D2C2",
+              background: pubFilter === p.name ? INK : "transparent",
+              color: pubFilter === p.name ? PAPER : SUBTEXT,
+            }}
+          >
+            {p.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
+        <span className="text-xs" style={{ color: SUBTEXT }}>Sentiment:</span>
+        {[
+          { id: "all", label: "All" },
+          { id: "positive", label: "Positive" },
+          { id: "negative", label: "Negative" },
+        ].map((s) => (
+          <button
+            key={s.id}
+            onClick={() => setSentimentFilter(s.id)}
+            className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+            style={{
+              borderColor: sentimentFilter === s.id ? GOLD : "#D9D2C2",
+              background: sentimentFilter === s.id ? "#FBF7EE" : "transparent",
+              color: sentimentFilter === s.id ? INK : SUBTEXT,
+            }}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
       {error && <div className="mb-3 text-xs" style={{ color: NEG }}>{error}</div>}
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-10 text-sm" style={{ color: SUBTEXT }}>
           <Loader2 size={16} className="animate-spin" /> Loading…
         </div>
       ) : data.length === 0 ? (
-        <div className="py-6 text-sm" style={{ color: SUBTEXT }}>No data found for this topic and date range.</div>
+        <div className="py-6 text-sm" style={{ color: SUBTEXT }}>No data found for this topic, publication, and date range.</div>
       ) : (
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
@@ -1737,8 +1813,24 @@ function PositiveNegativeVolumeChart({ data, loading, error }) {
             <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} allowDecimals={false} />
             <Tooltip contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} labelStyle={{ color: INK }} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar dataKey="positiveCount" name="Positive articles" stackId="polarity" fill={POS} />
-            <Bar dataKey="negativeCount" name="Negative articles" stackId="polarity" fill={NEG} radius={[2, 2, 0, 0]} />
+            {showPositive && (
+              <Bar
+                dataKey="positiveCount"
+                name="Positive articles"
+                stackId={stacked ? "polarity" : undefined}
+                fill={POS}
+                radius={stacked ? undefined : [2, 2, 0, 0]}
+              />
+            )}
+            {showNegative && (
+              <Bar
+                dataKey="negativeCount"
+                name="Negative articles"
+                stackId={stacked ? "polarity" : undefined}
+                fill={NEG}
+                radius={[2, 2, 0, 0]}
+              />
+            )}
           </BarChart>
         </ResponsiveContainer>
       )}
