@@ -413,10 +413,14 @@ export async function fetchMonthlyEngagementSentiment(topic, dateRange = {}, int
 }
 
 /**
- * Average positive sentiment and average negative sentiment per period,
- * computed separately — not one overall average. A period can have a
- * moderate overall average while actually containing strongly polarized
- * coverage; splitting positive and negative apart surfaces that.
+ * Per period, split by sentiment polarity: average sentiment and average
+ * engagement rate among only the positive-sentiment articles, and the same
+ * pair among only the negative-sentiment articles — computed separately,
+ * not blended into one overall average. This is what answers "does
+ * positive or negative coverage get more engagement, and does that
+ * relationship change over time" — a period can look moderate on an
+ * overall average while actually containing sharply polarized coverage
+ * with very different engagement on each side.
  */
 export async function fetchMonthlyPositiveNegativeSentiment(topic, dateRange = {}, interval = "month", publications = null) {
   const format = DATE_FORMAT_FOR_INTERVAL[interval] || "yyyy-MM";
@@ -429,11 +433,17 @@ export async function fetchMonthlyPositiveNegativeSentiment(topic, dateRange = {
         aggs: {
           positive: {
             filter: { range: { sentiment_score: { gt: 0 } } },
-            aggs: { avg_sentiment: { avg: { field: "sentiment_score" } } },
+            aggs: {
+              avg_sentiment: { avg: { field: "sentiment_score" } },
+              avg_engagement: { avg: { field: "engagement_rate" } },
+            },
           },
           negative: {
             filter: { range: { sentiment_score: { lt: 0 } } },
-            aggs: { avg_sentiment: { avg: { field: "sentiment_score" } } },
+            aggs: {
+              avg_sentiment: { avg: { field: "sentiment_score" } },
+              avg_engagement: { avg: { field: "engagement_rate" } },
+            },
           },
         },
       },
@@ -445,6 +455,8 @@ export async function fetchMonthlyPositiveNegativeSentiment(topic, dateRange = {
     period: b.key_as_string,
     avgPositive: b.positive.avg_sentiment.value ?? 0,
     avgNegative: b.negative.avg_sentiment.value ?? 0,
+    avgPositiveEngagement: b.positive.avg_engagement.value ?? 0,
+    avgNegativeEngagement: b.negative.avg_engagement.value ?? 0,
     positiveCount: b.positive.doc_count,
     negativeCount: b.negative.doc_count,
   }));

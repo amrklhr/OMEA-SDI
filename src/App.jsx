@@ -1695,7 +1695,7 @@ function EngagementSentimentChart({ topic, dateRange, selectedPubs, interval }) 
   );
 }
 
-function PositiveNegativeSentimentChart({ topic, dateRange, selectedPubs, interval }) {
+function EngagementByPolarityChart({ topic, dateRange, selectedPubs, interval }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -1714,12 +1714,12 @@ function PositiveNegativeSentimentChart({ topic, dateRange, selectedPubs, interv
 
   return (
     <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
-      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Positive vs. negative sentiment over time</div>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Engagement rate: positive vs. negative coverage</div>
       <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-        Two separate averages per period: the average sentiment among only the positive-sentiment
-        articles, and the average among only the negative-sentiment articles. A period can look
-        moderate on an overall average while actually containing sharply polarized coverage — this
-        splits the two apart instead of blending them into one number.
+        For each period, two bars: the average engagement rate among only the positive-sentiment
+        articles, and the average among only the negative-sentiment articles. Shows whether positive
+        or negative coverage gets more engagement, and whether that relationship holds steady or
+        flips over time.
       </div>
       {error && <div className="mb-3 text-xs" style={{ color: NEG }}>{error}</div>}
       {loading ? (
@@ -1733,15 +1733,15 @@ function PositiveNegativeSentimentChart({ topic, dateRange, selectedPubs, interv
           <BarChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
             <CartesianGrid stroke="#E3DDCE" vertical={false} />
             <XAxis dataKey="period" tick={{ fontSize: 10, fill: SUBTEXT }} interval={Math.ceil(data.length / 8)} />
-            <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} domain={[-1, 1]} />
+            <YAxis tick={{ fontSize: 10, fill: SUBTEXT }} tickFormatter={(v) => fmtPct(v)} />
             <Tooltip
               contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }}
               labelStyle={{ color: INK }}
-              formatter={(value, name) => [(value >= 0 ? "+" : "") + value.toFixed(2), name]}
+              formatter={(value, name) => [fmtPct(value), name]}
             />
             <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar dataKey="avgPositive" name="Avg. positive sentiment" fill={POS} radius={[2, 2, 0, 0]} />
-            <Bar dataKey="avgNegative" name="Avg. negative sentiment" fill={NEG} radius={[0, 0, 2, 2]} />
+            <Bar dataKey="avgPositiveEngagement" name="Engagement — positive articles" fill={POS} radius={[2, 2, 0, 0]} />
+            <Bar dataKey="avgNegativeEngagement" name="Engagement — negative articles" fill={NEG} radius={[2, 2, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       )}
@@ -1804,7 +1804,7 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRan
 
       <EngagementSentimentChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} interval={interval} />
 
-      <PositiveNegativeSentimentChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} interval={interval} />
+      <EngagementByPolarityChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} interval={interval} />
 
       <SentimentImpressionChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} />
 
