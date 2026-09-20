@@ -446,7 +446,7 @@ export async function fetchArticleSample(topic, dateRange = {}, publications = n
   const body = {
     size,
     query: topicFilter(topic, dateRange, publications),
-    _source: ["publication", "sentiment_score", "roi_index", "word_count", "engagement_rate"],
+    _source: ["publication", "sentiment_score", "roi_index", "word_count", "engagement_rate", "emv", "estimated_impressions"],
   };
   const data = await runQuery(body);
   // return { articles, totalMatched } so scatter charts can show

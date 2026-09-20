@@ -1945,11 +1945,12 @@ function MarketingOwnerView({ topic, selectedPubs, priorSummary, dateTo, dateRan
 
       <SpotlightCard spotlight={topic.spotlight} />
 
-      <MediaSharePie publications={topic.publications} selectedPubs={selectedPubs} />
+      <div className="grid gap-6 md:grid-cols-2">
+        <MediaSharePie publications={topic.publications} selectedPubs={selectedPubs} />
+        <ReachByPublicationChart topic={topic} selectedPubs={selectedPubs} />
+      </div>
 
       <CostRevenueReachChart topic={topic} selectedPubs={selectedPubs} />
-
-      <ReachByPublicationChart topic={topic} selectedPubs={selectedPubs} />
 
       <PositiveNegativeVolumeChart topic={topic} dateRange={dateRange} selectedPubs={selectedPubs} interval={interval} />
 
@@ -2081,24 +2082,29 @@ function SentimentHistogram({ data, loading }) {
   );
 }
 
-function SentimentRoiScatter({ sample, selectedPubs, loading }) {
+function SentimentProfitScatter({ sample, selectedPubs, loading }) {
   const byPub = {};
   const allPoints = [];
   const articles = sample?.articles || [];
   articles.forEach((a) => {
     if (!selectedPubs.includes(a.publication)) return;
-    (byPub[a.publication] = byPub[a.publication] || []).push({ x: a.sentiment_score, y: a.roi_index });
-    allPoints.push(a.roi_index);
+    const paidCost = ((a.estimated_impressions || 0) * 15) / 1000; // $15 CPM benchmark
+    const profit = (a.emv || 0) - paidCost;
+    (byPub[a.publication] = byPub[a.publication] || []).push({ x: a.sentiment_score, y: profit });
+    allPoints.push(profit);
   });
   const stats = computeStats(allPoints);
   const totalMatched = sample?.totalMatched ?? allPoints.length;
   const isPartialSample = allPoints.length < totalMatched;
   return (
     <div className="rounded-sm border p-5" style={{ borderColor: "#D9D2C2", background: "#FBFAF6" }}>
-      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Sentiment vs. ROI Index</div>
+      <div className="mb-1 font-serif text-lg" style={{ color: INK }}>Sentiment vs. profit (EMV − paid cost)</div>
       <div className="mb-4 text-xs" style={{ color: SUBTEXT }}>
-        Each point is one article — makes the ROI formula's dependence on sentiment visually
-        inspectable, colored by publication.
+        Each point is one article's actual profit — EMV minus the paid-media-equivalent cost — plotted
+        against sentiment, colored by publication. Unlike ROI Index, profit isn't normalized by cost, so
+        it still carries each article's reach (via estimated impressions), which is why publications
+        with a higher reach tier separate into their own visible bands here instead of collapsing onto
+        one line.
         {isPartialSample && (
           <span> Showing a sample of {fmtNum(allPoints.length)} of {fmtNum(totalMatched)} total matching articles (capped for chart performance).</span>
         )}
@@ -2112,9 +2118,9 @@ function SentimentRoiScatter({ sample, selectedPubs, loading }) {
           <ScatterChart margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
             <CartesianGrid stroke="#E3DDCE" />
             <XAxis type="number" dataKey="x" name="Sentiment" domain={[-1, 1]} tick={{ fontSize: 10, fill: SUBTEXT }} />
-            <YAxis type="number" dataKey="y" name="ROI Index" tickFormatter={fmtPct} tick={{ fontSize: 10, fill: SUBTEXT }} />
+            <YAxis type="number" dataKey="y" name="Profit" tickFormatter={(v) => fmtMoney(v)} tick={{ fontSize: 10, fill: SUBTEXT }} />
             <ZAxis range={[25, 25]} />
-            <Tooltip cursor={{ strokeDasharray: "3 3" }} contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} formatter={(v, n) => [n === "ROI" ? fmtPct(v) : v.toFixed(2), n]} />
+            <Tooltip cursor={{ strokeDasharray: "3 3" }} contentStyle={{ borderRadius: 2, borderColor: "#D9D2C2", fontSize: 12 }} formatter={(v, n) => [n === "Profit" ? fmtMoney(v) : v.toFixed(2), n]} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
             {Object.entries(byPub).map(([pub, points], i) => (
               <Scatter key={pub} name={pub} data={points} fill={colorFor(pub, i)} fillOpacity={0.7} />
@@ -2125,8 +2131,8 @@ function SentimentRoiScatter({ sample, selectedPubs, loading }) {
       {!loading && (
         <StatsRow items={[
           { label: isPartialSample ? `Sampled (of ${fmtNum(totalMatched)})` : "Articles (n)", value: fmtNum(allPoints.length) },
-          { label: "Avg ROI", value: fmtPct(stats.avg) },
-          { label: "Median ROI", value: fmtPct(stats.median) },
+          { label: "Avg profit", value: fmtMoney(stats.avg) },
+          { label: "Median profit", value: fmtMoney(stats.median) },
         ]} />
       )}
     </div>
@@ -2393,7 +2399,7 @@ function DataAnalystView({ topic, selectedPubs, sentimentDistribution, articleSa
       </div>
 
       <div className="grid gap-8 md:grid-cols-2">
-        <SentimentRoiScatter sample={articleSample} selectedPubs={selectedPubs} loading={analystExtrasLoading} />
+        <SentimentProfitScatter sample={articleSample} selectedPubs={selectedPubs} loading={analystExtrasLoading} />
         <WordCountEngagementScatter sample={articleSample} selectedPubs={selectedPubs} loading={analystExtrasLoading} />
       </div>
 
